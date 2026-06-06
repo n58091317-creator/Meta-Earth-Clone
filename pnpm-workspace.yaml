@@ -39,6 +39,7 @@ packages:
   - lib/*
   - lib/integrations/*
   - scripts
+  - meta-earth-checkin
 
 catalog:
   '@replit/vite-plugin-cartographer': ^0.5.1
@@ -75,6 +76,8 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
+  # Force protobufjs to 7.x — 6.x is blocked by the Replit security policy
+  protobufjs: "^7.4.0"
   # replit uses linux-x64 only, we can exclude all other platforms
   "esbuild>@esbuild/darwin-arm64": "-"
   "esbuild>@esbuild/darwin-x64": "-"

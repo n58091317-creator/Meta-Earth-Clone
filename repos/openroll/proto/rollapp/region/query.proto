@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package stchain.rollapp.region;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "rollapp/region/params.proto";
+import "rollapp/region/region.proto";
+import "rollapp/region/relayer.proto";
+import "rollapp/region/fee_collector.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "rollapp/region/dev_operator.proto";
+
+option go_package = "github.com/st-chain/rollapp/x/region/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  
+  // Parameters queries the parameters of the module.
+  rpc Params (QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/params";
+  
+  }
+  
+  // Queries a list of Region items.
+  rpc Region    (QueryGetRegionRequest) returns (QueryGetRegionResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/region/{region_id}";
+  
+  }
+  rpc RegionAll (QueryAllRegionRequest) returns (QueryAllRegionResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/region";
+  
+  }
+  
+  
+  // Queries a list of Relayer items.
+  rpc Relayer    (QueryGetRelayerRequest) returns (QueryGetRelayerResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/relayer/{address}";
+  
+  }
+  rpc RelayerAll (QueryAllRelayerRequest) returns (QueryAllRelayerResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/relayer";
+  
+  }
+  
+  // Queries a list of FeeCollector items.
+  rpc FeeCollector    (QueryGetFeeCollectorRequest) returns (QueryGetFeeCollectorResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/fee_collector/{index}";
+  
+  }
+  rpc FeeCollectorAll (QueryAllFeeCollectorRequest) returns (QueryAllFeeCollectorResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/fee_collector";
+  
+  }
+  
+  // Queries a DevOperator by index.
+  rpc DevOperator (QueryGetDevOperatorRequest) returns (QueryGetDevOperatorResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/region/dev_operator";
+  
+  }
+}
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  
+  // params holds all the parameters of this module.
+  Params params = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryGetRegionRequest {
+  string region_id = 1;
+}
+
+message QueryGetRegionResponse {
+  Region region = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllRegionRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllRegionResponse {
+  repeated Region                                 region     = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+
+
+message QueryMeAllRegionRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryMeAllRegionResponse {
+  repeated MeHubRegionType                        region     = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryGetRelayerRequest {
+  string address = 1;
+}
+
+message QueryGetRelayerResponse {
+  Relayer relayer = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllRelayerRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllRelayerResponse {
+  repeated Relayer                                relayer    = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryGetFeeCollectorRequest {
+  string index = 1;
+}
+
+message QueryGetFeeCollectorResponse {
+  FeeCollector feeCollector = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllFeeCollectorRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllFeeCollectorResponse {
+  repeated FeeCollector                           feeCollector = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+}
+
+message QueryGetDevOperatorRequest {}
+
+message QueryGetDevOperatorResponse {
+  DevOperator DevOperator = 1 [(gogoproto.nullable) = false];
+}
+

@@ -1,0 +1,590 @@
+# 🌍 Meta Earth Daily Check-in Bot — Replit AI Blueprint
+
+## GOAL
+Build a Node.js automation bot that performs a daily check-in transaction on the
+Meta Earth blockchain for one or more wallets. The bot should run on a schedule,
+use the official `meta-earth-js-sdk`, import wallets from mnemonic phrases,
+sign transactions locally, and broadcast them to the chain. It must never
+expose private keys or mnemonics outside of environment variables.
+
+---
+
+## TECH STACK
+- **Runtime**: Node.js 20+
+- **Language**: TypeScript (or JavaScript if TypeScript causes issues)
+- **Package manager**: npm
+- **Key dependency**: `meta-earth-js-sdk` (npm package)
+- **Scheduler**: `node-cron`
+- **Environment variables**: Replit Secrets (process.env)
+
+---
+
+## PROJECT STRUCTURE TO CREATE
+
+```
+meta-earth-checkin/
+├── package.json
+├── tsconfig.json          (if using TypeScript)
+├── .env.example           (template — no real secrets here)
+├── src/
+│   ├── index.ts           (entry point — starts the cron scheduler)
+│   ├── checkin.ts         (core check-in logic)
+│   ├── wallet.ts          (wallet import/management)
+│   └── logger.ts          (simple timestamped logger)
+└── README.md
+```
+
+---
+
+## STEP 1 — package.json
+
+Create `package.json` with these exact contents:
+
+```json
+{
+  "name": "meta-earth-checkin-bot",
+  "version": "1.0.0",
+  "description": "Daily check-in bot for Meta Earth blockchain",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "checkin-now": "ts-node src/checkin.ts"
+  },
+  "dependencies": {
+    "meta-earth-js-sdk": "latest",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  }
+}
+```
+
+---
+
+## STEP 2 — tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+---
+
+## STEP 3 — src/logger.ts
+
+Simple timestamped logger:
+
+```typescript
+export function log(message: string) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${message}`);
+}
+
+export function logError(message: string, error?: any) {
+  const timestamp = new Date().toISOString();
+  console.error(`[${timestamp}] ERROR: ${message}`, error || '');
+}
+```
+
+---
+
+## STEP 4 — src/wallet.ts
+
+Handles wallet import from mnemonic using the Meta Earth JS SDK:
+
+```typescript
+import { MetaEarthSDK } from 'meta-earth-js-sdk';
+import { log, logError } from './logger';
+
+export interface WalletInfo {
+  address: string;
+  mnemonic: string;
+  label: string;
+}
+
+/**
+ * Initialize the SDK and return imported wallets.
+ * Mnemonics are read from environment variables only.
+ * 
+ * Supports multiple wallets via:
+ *   MNEMONIC_1=word1 word2 ...
+ *   MNEMONIC_2=word1 word2 ...
+ *   etc.
+ * Or a single wallet via:
+ *   MNEMONIC=word1 word2 ...
+ */
+export async function initSDK(): Promise<MetaEarthSDK> {
+  const network = (process.env.NETWORK as 'mainnet' | 'testnet') || 'mainnet';
+
+  const sdk = new MetaEarthSDK({
+    config: {
+      network,
+      debug: process.env.DEBUG === 'true',
+    },
+  });
+
+  await sdk.initialize();
+  log(`SDK initialized on ${network}`);
+  return sdk;
+}
+
+export function loadMnemonicsFromEnv(): WalletInfo[] {
+  const wallets: WalletInfo[] = [];
+
+  // Support MNEMONIC_1, MNEMONIC_2, MNEMONIC_3 ... for multiple wallets
+  let index = 1;
+  while (true) {
+    const mnemonic = process.env[`MNEMONIC_${index}`];
+    if (!mnemonic) break;
+    wallets.push({
+      address: '',         // filled in after SDK import
+      mnemonic: mnemonic.trim(),
+      label: `Wallet ${index}`,
+    });
+    index++;
+  }
+
+  // Also support a single MNEMONIC env var
+  if (wallets.length === 0 && process.env.MNEMONIC) {
+    wallets.push({
+      address: '',
+      mnemonic: process.env.MNEMONIC.trim(),
+      label: 'Wallet 1',
+    });
+  }
+
+  if (wallets.length === 0) {
+    throw new Error(
+      'No mnemonic found. Set MNEMONIC or MNEMONIC_1 in Replit Secrets.'
+    );
+  }
+
+  return wallets;
+}
+
+export async function importWallets(
+  sdk: MetaEarthSDK,
+  walletInfos: WalletInfo[]
+): Promise<WalletInfo[]> {
+  const imported: WalletInfo[] = [];
+
+  for (const info of walletInfos) {
+    try {
+      const wallet = await sdk.wallet.createMnemonicWallet(info.mnemonic);
+      imported.push({
+        ...info,
+        address: wallet.address,
+      });
+      log(`${info.label} imported: ${wallet.address}`);
+    } catch (err) {
+      logError(`Failed to import ${info.label}`, err);
+    }
+  }
+
+  return imported;
+}
+```
+
+---
+
+## STEP 5 — src/checkin.ts
+
+Core check-in logic. This is the most important file:
+
+```typescript
+import { MetaEarthSDK } from 'meta-earth-js-sdk';
+import { log, logError } from './logger';
+import { WalletInfo } from './wallet';
+
+/**
+ * Perform a daily check-in for a single wallet.
+ * 
+ * The Meta Earth x/checkin module exposes a MsgCheckin transaction.
+ * The SDK uses Cosmos SDK transaction broadcasting under the hood.
+ * 
+ * NOTE: If the SDK does not expose a direct `checkin()` method,
+ * we fall back to broadcasting a raw Cosmos transaction using the
+ * checkin module's message type URL.
+ */
+export async function performCheckin(
+  sdk: MetaEarthSDK,
+  wallet: WalletInfo
+): Promise<{ success: boolean; txHash?: string; error?: string }> {
+  log(`Starting check-in for ${wallet.label} (${wallet.address})`);
+
+  try {
+    // ── Attempt 1: Use SDK direct method if it exists ──────────────────
+    // The SDK may expose sdk.checkin or similar in future versions.
+    // Try it first and fall back if it doesn't exist.
+    if ((sdk as any).checkin?.daily) {
+      const result = await (sdk as any).checkin.daily({
+        address: wallet.address,
+        mnemonic: wallet.mnemonic,
+        layer: 'hub',
+      });
+      log(`✅ ${wallet.label} check-in SUCCESS via SDK method. TX: ${result}`);
+      return { success: true, txHash: result };
+    }
+
+    // ── Attempt 2: Use transaction module to broadcast MsgCheckin ───────
+    // The x/checkin module type URL based on the Cosmos SDK convention.
+    // This broadcasts a raw protobuf message using the SDK's transaction layer.
+    const msgTypeUrl = '/metaearth.checkin.v1beta1.MsgCheckin';
+
+    const txHash = await (sdk as any).transaction.broadcastTx({
+      fromAddress: wallet.address,
+      mnemonic: wallet.mnemonic,
+      messages: [
+        {
+          typeUrl: msgTypeUrl,
+          value: {
+            creator: wallet.address,
+          },
+        },
+      ],
+      layer: 'hub',
+    });
+
+    log(`✅ ${wallet.label} check-in SUCCESS. TX Hash: ${txHash}`);
+    log(`   Explorer: https://explorer.metaearth.io/tx/${txHash}`);
+    return { success: true, txHash };
+
+  } catch (err: any) {
+    const message = err?.message || String(err);
+
+    // Handle "already checked in today" gracefully — this is not a real error
+    if (
+      message.toLowerCase().includes('already') ||
+      message.toLowerCase().includes('duplicate') ||
+      message.toLowerCase().includes('checkin')
+    ) {
+      log(`ℹ️  ${wallet.label} already checked in today — skipping.`);
+      return { success: true, txHash: 'already-checked-in' };
+    }
+
+    logError(`❌ ${wallet.label} check-in FAILED: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Run check-in for ALL wallets.
+ */
+export async function runCheckinForAll(
+  sdk: MetaEarthSDK,
+  wallets: WalletInfo[]
+): Promise<void> {
+  log(`=== Running check-in for ${wallets.length} wallet(s) ===`);
+
+  const results = [];
+  for (const wallet of wallets) {
+    const result = await performCheckin(sdk, wallet);
+    results.push({ wallet: wallet.label, ...result });
+
+    // Small delay between wallets to avoid rate limiting
+    if (wallets.length > 1) {
+      await sleep(2000);
+    }
+  }
+
+  // Summary
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.filter((r) => !r.success).length;
+  log(`=== Done: ${succeeded} succeeded, ${failed} failed ===`);
+
+  if (failed > 0) {
+    const failures = results.filter((r) => !r.success);
+    failures.forEach((f) => logError(`Failed wallet: ${f.wallet} — ${f.error}`));
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ── Allow running this file directly for a one-off check-in ─────────────────
+// Run: npm run checkin-now
+if (require.main === module) {
+  (async () => {
+    require('dotenv').config();
+    const { initSDK, loadMnemonicsFromEnv, importWallets } = require('./wallet');
+    const sdk = await initSDK();
+    const mnemonics = loadMnemonicsFromEnv();
+    const wallets = await importWallets(sdk, mnemonics);
+    await runCheckinForAll(sdk, wallets);
+    process.exit(0);
+  })();
+}
+```
+
+---
+
+## STEP 6 — src/index.ts
+
+Entry point with cron scheduler:
+
+```typescript
+import * as cron from 'node-cron';
+import * as dotenv from 'dotenv';
+import { log, logError } from './logger';
+import { initSDK, loadMnemonicsFromEnv, importWallets } from './wallet';
+import { runCheckinForAll } from './checkin';
+
+dotenv.config();
+
+// Cron schedule: runs every day at 08:00 UTC
+// Format: 'minute hour day month weekday'
+// Change to your preferred time. Some examples:
+//   '0 8 * * *'   = 08:00 UTC daily
+//   '0 0 * * *'   = midnight UTC daily
+//   '*/5 * * * *' = every 5 minutes (for testing only)
+const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '0 8 * * *';
+
+async function main() {
+  log('🌍 Meta Earth Check-in Bot starting...');
+
+  // Validate environment
+  const mnemonics = loadMnemonicsFromEnv(); // throws if none found
+  log(`Loaded ${mnemonics.length} wallet mnemonic(s) from environment.`);
+
+  // Initialize SDK once
+  const sdk = await initSDK();
+
+  // Import wallets
+  const wallets = await importWallets(sdk, mnemonics);
+  if (wallets.length === 0) {
+    logError('No wallets could be imported. Exiting.');
+    process.exit(1);
+  }
+
+  // Run immediately on startup (optional — remove if you don't want this)
+  if (process.env.RUN_ON_START === 'true') {
+    log('RUN_ON_START=true — running check-in now before scheduling...');
+    await runCheckinForAll(sdk, wallets);
+  }
+
+  // Schedule daily check-in
+  log(`Scheduling daily check-in with cron: "${CRON_SCHEDULE}"`);
+  cron.schedule(CRON_SCHEDULE, async () => {
+    log('⏰ Cron triggered — running daily check-in...');
+    try {
+      await runCheckinForAll(sdk, wallets);
+    } catch (err) {
+      logError('Unexpected error during scheduled check-in', err);
+    }
+  });
+
+  log('✅ Bot is running. Waiting for scheduled check-in...');
+  log('   Keep this Replit alive using the "Always On" feature or UptimeRobot.');
+}
+
+main().catch((err) => {
+  logError('Fatal error during startup', err);
+  process.exit(1);
+});
+```
+
+---
+
+## STEP 7 — .env.example
+
+Create this file (it's just a template — no real secrets):
+
+```
+# Copy this to .env for local dev, or add these as Replit Secrets
+
+# Your Meta Earth wallet mnemonic phrase (12 or 24 words)
+MNEMONIC=word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12
+
+# For multiple wallets, use numbered variables:
+# MNEMONIC_1=word1 word2 ... word12
+# MNEMONIC_2=word1 word2 ... word12
+
+# Network: mainnet or testnet
+NETWORK=mainnet
+
+# Cron schedule (default: 08:00 UTC daily)
+# See https://crontab.guru for help
+CRON_SCHEDULE=0 8 * * *
+
+# Set to true to run check-in immediately when the bot starts
+RUN_ON_START=true
+
+# Set to true for verbose SDK logs
+DEBUG=false
+```
+
+---
+
+## STEP 8 — REPLIT SECRETS TO SET
+
+In Replit, go to **Tools → Secrets** and add:
+
+| Secret Key   | Value                                      |
+|--------------|--------------------------------------------|
+| `MNEMONIC`   | Your 12 or 24 word mnemonic phrase         |
+| `NETWORK`    | `mainnet`                                  |
+| `RUN_ON_START` | `true`                                   |
+| `CRON_SCHEDULE` | `0 8 * * *`                             |
+
+⚠️ **NEVER** put your mnemonic in any code file. Only in Replit Secrets.
+
+---
+
+## STEP 9 — IMPORTANT IMPLEMENTATION NOTES FOR REPLIT AI
+
+### About the check-in transaction type URL
+
+The `meta-earth` blockchain has an `x/checkin` Cosmos SDK module. Based on
+Cosmos SDK conventions, the protobuf message type URL is likely one of:
+
+- `/metaearth.checkin.v1beta1.MsgCheckin`
+- `/metaearth.checkin.MsgCheckin`
+- `/cosmos.checkin.v1beta1.MsgCheckin`
+
+The `creator` field in the message value should be the wallet's `me1...` address.
+
+If the type URL is wrong, the transaction will fail with "unknown message type".
+In that case, try the alternatives above. You can also inspect the chain's
+swagger/API docs at `https://api.metaearth.io/swagger` to find the exact path.
+
+### About the SDK's transaction signing
+
+The `meta-earth-js-sdk` uses `@cosmjs/stargate` under the hood for signing
+and broadcasting transactions. When calling `sdk.wallet.createMnemonicWallet(mnemonic)`,
+it creates a `DirectSecp256k1HdWallet` internally. The signing wallet needs to
+be passed or set before broadcasting — check the SDK's `src/modules/transaction/service.ts`
+to understand how it wires the signer to the broadcaster.
+
+If the SDK doesn't expose a way to pass a mnemonic directly to `broadcastTx`,
+use `@cosmjs/stargate` directly:
+
+```typescript
+import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
+import { SigningStargateClient, GasPrice } from '@cosmjs/stargate';
+
+const RPC_ENDPOINT = 'https://rpc.metaearth.io';
+
+async function checkinWithCosmjs(mnemonic: string, address: string) {
+  const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
+    prefix: 'me',  // Meta Earth bech32 prefix — confirm from chain
+  });
+
+  const client = await SigningStargateClient.connectWithSigner(
+    RPC_ENDPOINT,
+    wallet,
+    { gasPrice: GasPrice.fromString('0.025umec') }
+  );
+
+  const msg = {
+    typeUrl: '/metaearth.checkin.v1beta1.MsgCheckin',
+    value: { creator: address },
+  };
+
+  const result = await client.signAndBroadcast(
+    address,
+    [msg],
+    'auto',
+    'Daily check-in'
+  );
+
+  return result.transactionHash;
+}
+```
+
+Add `@cosmjs/stargate` and `@cosmjs/proto-signing` to package.json if using this approach.
+
+### About keeping Replit alive
+
+Replit free tier suspends repls after inactivity. To keep the bot running 24/7:
+1. Use Replit's **"Always On"** feature (paid), OR
+2. Use a free service like **UptimeRobot** to ping the repl every 5 minutes.
+   To support pinging, add a simple HTTP server alongside the cron job:
+
+```typescript
+import * as http from 'http';
+
+// Add this inside main() before the cron.schedule() call:
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Meta Earth Check-in Bot is running\n');
+}).listen(PORT, () => {
+  log(`Health check server listening on port ${PORT}`);
+});
+```
+
+---
+
+## STEP 10 — HOW TO RUN
+
+After Replit AI has generated all files:
+
+1. **Install dependencies**: In the Replit shell, run:
+   ```
+   npm install
+   ```
+
+2. **Add your mnemonic** to Replit Secrets (Tools → Secrets → add `MNEMONIC`)
+
+3. **Test a one-off check-in first**:
+   ```
+   npm run checkin-now
+   ```
+
+4. **Start the bot** (runs the cron scheduler):
+   ```
+   npm run dev
+   ```
+   or after building:
+   ```
+   npm run build && npm start
+   ```
+
+5. Watch the logs — you should see check-in results with TX hashes.
+
+---
+
+## KNOWN CHAIN PARAMETERS (confirmed from repos)
+
+| Parameter       | Value                              |
+|-----------------|------------------------------------|
+| Chain ID        | `mechain_100-1`                    |
+| Native denom    | `umec`                             |
+| Bech32 prefix   | `me` (addresses start with `me1`) |
+| RPC endpoint    | `https://rpc.metaearth.io`        |
+| REST endpoint   | `https://api.metaearth.io`        |
+| Explorer        | `https://explorer.metaearth.io`   |
+| Layer           | `hub` (for check-in transactions) |
+| Gas price       | `0.025umec`                        |
+| SDK npm package | `meta-earth-js-sdk`                |
+
+---
+
+## SECURITY CHECKLIST
+
+- ✅ Mnemonic stored ONLY in Replit Secrets (environment variable)
+- ✅ No mnemonic or private key in any code file
+- ✅ `.env` is in `.gitignore` if you ever push to GitHub
+- ✅ Only a signed transaction is sent to the network — no secrets transmitted
+- ✅ The SDK derives the private key in-memory and discards it after signing

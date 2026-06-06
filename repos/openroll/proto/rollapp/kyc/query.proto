@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package stchain.rollapp.kyc;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "rollapp/kyc/params.proto";
+import "rollapp/kyc/kyc_credential.proto";
+import "rollapp/kyc/credential.proto";
+import "rollapp/kyc/did.proto";
+import "cosmos_proto/cosmos.proto";
+import "rollapp/kyc/did_info.proto";
+
+option go_package = "github.com/st-chain/rollapp/x/kyc/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  
+  // Parameters queries the parameters of the module.
+  rpc Params (QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/kyc/params";
+  
+  }
+  
+  // Queries a list of KYCCredential items.
+  rpc KYCCredential    (QueryGetKYCCredentialRequest) returns (QueryGetKYCCredentialResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/kyc/kyc_credential/{did}";
+  
+  }
+  rpc KYCCredentialAll (QueryAllKYCCredentialRequest) returns (QueryAllKYCCredentialResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/kyc/kyc_credential";
+  
+  }
+  
+  // Queries a list of Did items.
+  rpc Did    (QueryGetDidRequest) returns (QueryGetDidResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/kyc/did/{address}";
+  
+  }
+  rpc DidAll (QueryAllDidRequest) returns (QueryAllDidResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/kyc/did";
+  
+  }
+  
+  // Queries a list of DidInfo items.
+  rpc DidInfo    (QueryGetDidInfoRequest) returns (QueryGetDidInfoResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/kyc/did_info/{did}";
+  
+  }
+  rpc DidInfoAll (QueryAllDidInfoRequest) returns (QueryAllDidInfoResponse) {
+    option (google.api.http).get = "/st-chain/rollapp/kyc/did_info";
+  
+  }
+}
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  
+  // params holds all the parameters of this module.
+  Params params = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryGetKYCCredentialRequest {
+  string did = 1;
+}
+
+message QueryGetKYCCredentialResponse {
+  KYCCredential kYCCredential = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllKYCCredentialRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllKYCCredentialResponse {
+  repeated KYCCredential                          kYCCredential = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination    = 2;
+}
+
+message QueryGetDidRequest {
+  string address = 1;
+}
+
+message QueryGetDidResponse {
+  Did did = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllDidRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllDidResponse {
+  repeated Did                                    did        = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryMeKycsRequest {
+  string                                regionid   = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+
+message QueryMeKycsResponse {
+  repeated Credential                             KYCs       = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryMeDidInfoRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryMeDidInfoResponse {
+  repeated DidInfo                               infos      = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+//copy from me-hub
+
+message QueryGetDidInfoRequest {
+  string did = 1;
+}
+
+message QueryGetDidInfoResponse {
+  DidInfo didInfo = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllDidInfoRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllDidInfoResponse {
+  repeated DidInfo                                didInfo    = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+

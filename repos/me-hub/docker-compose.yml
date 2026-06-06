@@ -1,0 +1,31 @@
+networks:
+  me:
+    name: me
+    external: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.27.0.0/16
+
+services:
+  me_node1:
+    container_name: me_node1
+    networks:
+      me:
+        ipv4_address: 172.27.0.100
+    image: 192.168.0.79/me-hub/med:latest
+    build:
+      context: .
+      dockerfile: Dockerfile_local
+    command:
+      - med
+      - start
+    restart: always
+    ports:
+      - 36657:36657
+      - 36656:36656
+      - 8090:8090
+      - 1318:1318
+      - 9545:9545
+    volumes:
+      - /Users/aris/.mechain:/root/.mechain

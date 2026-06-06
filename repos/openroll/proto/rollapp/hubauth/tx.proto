@@ -1,0 +1,18 @@
+syntax = "proto3";
+package stchain.rollapp.hubauth;
+
+option go_package = "github.com/st-chain/rollapp/x/hubauth/types";
+
+// Msg defines the Msg service.
+service Msg {
+  rpc SetClientId      (MsgSetClientId) returns (MsgSetClientIdResponse     );
+}
+
+message MsgSetClientId {
+  string creator = 1;
+  string client_id = 2;
+  string denom_path = 3;
+}
+
+message MsgSetClientIdResponse {}
+

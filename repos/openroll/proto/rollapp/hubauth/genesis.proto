@@ -1,0 +1,12 @@
+syntax = "proto3";
+package stchain.rollapp.hubauth;
+
+import "gogoproto/gogo.proto";
+import "rollapp/hubauth/params.proto";
+
+option go_package = "github.com/st-chain/rollapp/x/hubauth/types";
+
+// GenesisState defines the hubauth module's genesis state.
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+}

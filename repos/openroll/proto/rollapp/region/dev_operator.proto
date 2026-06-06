@@ -1,0 +1,9 @@
+syntax = "proto3";
+package stchain.rollapp.region;
+
+option go_package = "github.com/st-chain/rollapp/x/region/types";
+
+message DevOperator {
+  string address = 1; 
+  
+}

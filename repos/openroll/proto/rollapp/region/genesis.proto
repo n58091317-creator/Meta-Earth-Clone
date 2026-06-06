@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package stchain.rollapp.region;
+
+import "gogoproto/gogo.proto";
+import "rollapp/region/params.proto";
+import "rollapp/region/region.proto";
+import "rollapp/region/relayer.proto";
+import "rollapp/region/fee_collector.proto";
+import "rollapp/region/dev_operator.proto";
+
+option go_package = "github.com/st-chain/rollapp/x/region/types";
+
+// GenesisState defines the region module's genesis state.
+message GenesisState {
+           Params       params           = 1 [(gogoproto.nullable) = false];
+  repeated Region       region_list      = 2 [(gogoproto.nullable) = false];
+  repeated Relayer      relayerList      = 3 [(gogoproto.nullable) = false];
+  repeated FeeCollector feeCollectorList = 4 [(gogoproto.nullable) = false];
+           DevOperator  devOperator      = 5;
+}
+

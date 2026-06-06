@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package stchain.rollapp.kyc;
+
+import "gogoproto/gogo.proto";
+import "rollapp/kyc/params.proto";
+import "rollapp/kyc/kyc_credential.proto";
+import "rollapp/kyc/did.proto";
+import "rollapp/kyc/did_info.proto";
+
+option go_package = "github.com/st-chain/rollapp/x/kyc/types";
+
+// GenesisState defines the kyc module's genesis state.
+message GenesisState {
+           Params        params            = 1 [(gogoproto.nullable) = false];
+           string        port_id           = 2;
+  repeated KYCCredential kYCCredentialList = 3 [(gogoproto.nullable) = false];
+  repeated Did           didList           = 4 [(gogoproto.nullable) = false];
+  repeated DidInfo       didInfoList       = 5 [(gogoproto.nullable) = false];
+}
+

@@ -1,0 +1,17 @@
+{
+  "type": "cosmos",
+  "value": {
+    "key": "relayer-rollapp-key",
+    "chain-id": "me_101-1",
+    "rpc-addr": "http://192.168.0.198:26657",
+    "account-prefix": "me",
+    "keyring-backend": "test",
+    "gas-adjustment": 1.2,
+    "gas-prices": "0.0",
+    "debug": true,
+    "timeout": "10s",
+    "output-format": "json",
+    "sign-mode": "direct",
+    "client-type": "07-tendermint"
+  }
+}

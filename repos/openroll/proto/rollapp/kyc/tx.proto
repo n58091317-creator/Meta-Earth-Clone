@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package stchain.rollapp.kyc;
+
+option go_package = "github.com/st-chain/rollapp/x/kyc/types";
+
+// Msg defines the Msg service.
+service Msg {
+  rpc UpdateDID(MsgUpdateDID) returns (MsgUpdateDIDResponse);
+  rpc UpdateCredential(MsgUpdateCredential) returns (MsgUpdateCredentialResponse);
+  rpc RemoveKyc(MsgRemoveKyc) returns (MsgRemoveKycResponse);
+  rpc UpdateKycInfo (MsgUpdateKycInfo) returns (MsgUpdateKycInfoResponse);
+}
+
+message MsgUpdateDID {
+  string creator = 1;
+  uint64 proofHeight = 2;
+  bytes storeHash = 3;
+  bytes storeProof = 4;
+  bytes proofs = 5;
+  repeated item dids = 6;
+}
+
+message MsgUpdateDIDResponse {}
+
+message MsgUpdateCredential {
+  string creator = 1;
+  uint64 proofHeight = 2;
+  bytes storeHash = 3;
+  bytes storeProof = 4;
+  bytes proofs = 5;
+  repeated item credentials = 6;
+}
+
+message MsgUpdateCredentialResponse {}
+message item {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message MsgRemoveKyc {
+  string creator = 1;
+  uint64 proofHeight = 2;
+  bytes storeHash = 3;
+  bytes storeProof = 4;
+  bytes proofs = 5;
+  repeated item credentials = 6;
+}
+
+message MsgRemoveKycResponse {}
+
+message MsgUpdateKycInfo {
+  string creator     = 1;
+  uint64 proofHeight = 2;
+  bytes storeHash   = 3;
+  bytes storeProof  = 4;
+  bytes proofs      = 5;
+  repeated item didInfos    = 6;
+}
+
+message MsgUpdateKycInfoResponse {}
+

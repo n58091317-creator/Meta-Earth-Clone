@@ -1,0 +1,180 @@
+import { StdFee } from '@cosmjs/launchpad'
+import { SigningStargateClient, DeliverTxResponse } from '@cosmjs/stargate'
+import { EncodeObject, GeneratedType, OfflineSigner, Registry } from '@cosmjs/proto-signing'
+import { msgTypes } from './registry'
+import { MsgSend } from './types/cosmos/nft/v1beta1/tx'
+import { IgniteClient } from '../client'
+import { Api } from './rest'
+
+import { EventSend as typeEventSend } from './types'
+import { EventMint as typeEventMint } from './types'
+import { EventBurn as typeEventBurn } from './types'
+import { Entry as typeEntry } from './types'
+import { Class as typeClass } from './types'
+import { NFT as typeNFT } from './types'
+import { gas_max_set } from '../../config/define'
+import { getFinalGas } from '../../me-client-utils/config'
+import { getSignData, handleTxRaw } from '../../me-client-utils'
+import { getSimulateGas } from '../../me-client-utils'
+
+export {}
+
+export const registry = new Registry(msgTypes)
+// TODO: Deprecated
+type Field = {
+  name: string
+  type: unknown
+}
+function getStructure(template) {
+  const structure: { fields: Field[] } = { fields: [] }
+  for (let [key, value] of Object.entries(template)) {
+    let field = { name: key, type: typeof value }
+    structure.fields.push(field)
+  }
+  return structure
+}
+const defaultFee = {
+  amount: [],
+  gas: '200000',
+}
+
+interface TxClientOptions {
+  addr: string
+  prefix: string
+  signer?: OfflineSigner
+}
+
+export const txClient = (
+  { signer, prefix, addr }: TxClientOptions = { addr: 'http://localhost:26657', prefix: 'cosmos' },
+) => {
+  return {
+    async sendMsgSend({ value, fee, memo, gas = 0 }): Promise<any> {
+      if (!signer) {
+        throw new Error('TxClient:sendMsgSend: Unable to sign Tx. Signer is not present.')
+      }
+      try {
+        const { address } = (await signer.getAccounts())[0]
+        const signingClient = await SigningStargateClient.offline(signer, { registry })
+        let msg = this.msgSendMsg({
+          value: MsgSend.fromPartial(value),
+        })
+
+        const { gasUsed } = await this.simulateSendGas({
+          value,
+        })
+
+        if (!gasUsed) throw Error(`sendMsgSend: gasUsed error`)
+        const gas_fee = getFinalGas(gasUsed, gas)
+        if (!gasUsed) {
+          throw Error()
+        }
+
+        const _fee = {
+          amount: [{ denom: 'umec', amount: `${gas_fee}` }],
+          // gas: String(gas),
+          gas: gas_max_set,
+        }
+        const signResData = await getSignData({ signingClient, address, msg, fee: _fee, memo })
+        if (!(signResData as any).result) throw Error('signResData Error')
+        let rowRes = signResData.rowRes
+
+        return await handleTxRaw(rowRes)
+      } catch (e: any) {
+        throw new Error('TxClient:sendMsgSend: Could not broadcast Tx: ' + e.message)
+      }
+    },
+
+    msgSendMsg({ value }: any): EncodeObject {
+      try {
+        return {
+          typeUrl: '/cosmos.nft.v1beta1.MsgSend',
+          value: MsgSend.fromPartial(value),
+        }
+      } catch (e: any) {
+        throw new Error('TxClient:MsgSend: Could not create message: ' + e.message)
+      }
+    },
+
+    async simulateSendGas({ value, gas = 20000, msg }) {
+      if (!signer) {
+        throw new Error('TxClient:cosmos.nft.v1beta1: Unable to sign Tx. Signer is not present.')
+      }
+
+      let { address } = (await signer.getAccounts())[0]
+      let signingClient = await SigningStargateClient.offline(signer, { registry })
+      let _msg
+      if (msg) {
+        _msg = msg
+      } else {
+        _msg = this.msgSendMsg({
+          value: MsgSend.fromPartial(value),
+        })
+      }
+
+      let fee = {
+        amount: [{ denom: 'umec', amount: `${gas}` }],
+        gas: gas_max_set,
+      }
+      let signResData = await getSignData({ signingClient, address, msg: _msg, fee })
+      if (!(signResData as any).result) throw Error()
+      let rowRes = signResData.rowRes
+      const rowResJSON = await handleTxRaw(rowRes)
+      return await getSimulateGas(rowResJSON)
+    },
+  }
+}
+
+interface QueryClientOptions {
+  addr: string
+}
+
+export const queryClient = (
+  { addr: addr }: QueryClientOptions = { addr: 'http://localhost:1317' },
+) => {
+  return new Api({ baseURL: addr })
+}
+
+class SDKModule {
+  public query: ReturnType<typeof queryClient>
+  public tx: ReturnType<typeof txClient>
+  public structure: Record<string, unknown>
+  public registry: Array<[string, GeneratedType]> = []
+
+  constructor(client: IgniteClient) {
+    this.query = queryClient({ addr: client.env.apiURL })
+    this.updateTX(client)
+    this.structure = {
+      EventSend: getStructure(typeEventSend.fromPartial({})),
+      EventMint: getStructure(typeEventMint.fromPartial({})),
+      EventBurn: getStructure(typeEventBurn.fromPartial({})),
+      Entry: getStructure(typeEntry.fromPartial({})),
+      Class: getStructure(typeClass.fromPartial({})),
+      NFT: getStructure(typeNFT.fromPartial({})),
+    }
+    client.on('signer-changed', (signer) => {
+      this.updateTX(client)
+    })
+  }
+  updateTX(client: IgniteClient) {
+    const methods = txClient({
+      signer: client.signer,
+      addr: client.env.rpcURL,
+      prefix: client.env.prefix ?? 'cosmos',
+    })
+
+    this.tx = methods
+    for (let m in methods) {
+      this.tx[m] = methods[m].bind(this.tx)
+    }
+  }
+}
+
+const Module = (test: IgniteClient) => {
+  return {
+    module: {
+      CosmosNftV1Beta1: new SDKModule(test),
+    },
+    registry: msgTypes,
+  }
+}
+export default Module

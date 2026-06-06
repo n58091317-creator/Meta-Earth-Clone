@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package stchain.rollapp.kyc;
+
+option go_package = "github.com/st-chain/rollapp/x/kyc/types";
+
+message KycPacketData {
+  oneof packet {
+    NoData           noData       = 1;
+    IbcKycPacketData ibcKycPacket = 2;
+  }
+}
+
+message NoData {}
+
+// IbcKycPacketData defines a struct for the packet payload
+message IbcKycPacketData {
+  string address = 1;
+}
+
+// IbcKycPacketAck defines a struct for the packet acknowledgment
+message IbcKycPacketAck {}
+

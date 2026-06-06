@@ -1,0 +1,8 @@
+syntax = "proto3";
+package stchain.rollapp.kyc;
+
+option go_package = "github.com/st-chain/rollapp/x/kyc/types";
+
+message KycEventSeq {
+  uint64 seq = 1;
+}

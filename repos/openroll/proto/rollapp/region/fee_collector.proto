@@ -1,0 +1,13 @@
+syntax = "proto3";
+package stchain.rollapp.region;
+
+option go_package = "github.com/st-chain/rollapp/x/region/types";
+import "gogoproto/gogo.proto"; 
+import "cosmos/base/v1beta1/coin.proto"; 
+
+message FeeCollector {
+  string index = 1; 
+  repeated cosmos.base.v1beta1.Coin fees = 2 [(gogoproto.nullable) = false]; 
+  
+}
+

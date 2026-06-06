@@ -1,0 +1,28 @@
+{
+  "name": "@workspace/meta-earth-checkin",
+  "version": "1.0.0",
+  "description": "Daily check-in bot for Meta Earth blockchain",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "checkin-now": "tsx src/checkin.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cosmjs/amino": "^0.32.4",
+    "@cosmjs/encoding": "^0.32.4",
+    "@cosmjs/proto-signing": "^0.32.4",
+    "@cosmjs/stargate": "^0.32.4",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "catalog:",
+    "typescript": "~5.9.3"
+  }
+}

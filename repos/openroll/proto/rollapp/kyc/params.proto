@@ -1,0 +1,12 @@
+syntax = "proto3";
+package stchain.rollapp.kyc;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/st-chain/rollapp/x/kyc/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (gogoproto.goproto_stringer) = false;
+  
+}

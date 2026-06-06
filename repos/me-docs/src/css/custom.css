@@ -1,0 +1,171 @@
+/**
+ * Any CSS included here will be global. The classic template
+ * bundles Infima by default. Infima is a CSS framework designed to
+ * work well for content-centric websites.
+ */
+
+/* You can override the default Infima variables here. */
+:root {
+  --ifm-color-primary: #2e8555;
+  --ifm-color-primary-dark: #29784c;
+  --ifm-color-primary-darker: #277148;
+  --ifm-color-primary-darkest: #205d3b;
+  --ifm-color-primary-light: #33925d;
+  --ifm-color-primary-lighter: #359962;
+  --ifm-color-primary-lightest: #3cad6e;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+/* For readability concerns, you should choose a lighter palette in dark mode. */
+[data-theme="dark"] {
+  --ifm-color-primary: #25c2a0;
+  --ifm-color-primary-dark: #21af90;
+  --ifm-color-primary-darker: #1fa588;
+  --ifm-color-primary-darkest: #1a8870;
+  --ifm-color-primary-light: #29d5b0;
+  --ifm-color-primary-lighter: #32d8b4;
+  --ifm-color-primary-lightest: #4fddbf;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+.theme-layout-navbar {
+  background: #000000;
+}
+.navbar__inner {
+  max-width: 1500px;
+  margin: 0 auto;
+  @media screen and (max-width: 1500px) {
+    margin: auto !important;
+  }
+}
+
+#__docusaurus_skipToContent_fallback {
+  max-width: 1500px;
+  margin: 0 auto;
+  width: 100%;
+  @media screen and (max-width: 1500px) {
+    margin: auto !important;
+  }
+}
+.navbar__title {
+  color: #ffffff;
+}
+
+.theme-layout-navbar-right > :last-child {
+  display: none;
+}
+
+.navbar__search::before {
+  content: "";
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  background: url(/img/search_icon.png) no-repeat center center;
+  background-size: 100% 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  left: 10px;
+  z-index: 1;
+}
+.navbar__search-input {
+  background: #000;
+  border: 1px solid #333;
+  width: 241px;
+  color: #fff;
+}
+
+.navbar__search-input:focus {
+  background: #000;
+  border: 1px solid #666 !important;
+  width: 241px;
+  outline: none !important;
+}
+
+[class^="searchHintContainer_"] {
+  display: none !important;
+}
+
+.navbar__brand {
+  @media (max-width: 768px) {
+    display: none;
+  }
+}
+
+.clean-btn svg {
+  color: #fff;
+}
+
+.theme-doc-sidebar-menu li {
+  margin-bottom: 10px;
+}
+
+.menu {
+  margin-top: 20px;
+}
+
+.menu__link--active {
+  color: #0084ff !important;
+  background: none;
+}
+
+.navbar-sidebar__back {
+  display: none;
+}
+
+.breadcrumbs li:first-child {
+  display: none;
+}
+.container .row .col:first-child {
+  padding-top: 10px !important;
+}
+
+.table-of-contents__link--active {
+  color: #0084ff !important;
+}
+
+.pagination-nav__label {
+  color: #0084ff !important;
+}
+
+/* .theme-edit-this-page {
+  display: none;
+} */
+
+.theme-doc-toc-desktop ul a {
+  font-size: 14px !important;
+}
+
+.theme-doc-toc-desktop ul a:hover {
+  color: #0084ff !important;
+}
+
+.theme-doc-markdown a {
+  color: #4183c4;
+}
+
+.theme-doc-sidebar-menu > li:nth-child(2) {
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #ededed;
+}
+
+.global_loading {
+  width: 100%;
+  height: 100%;
+  position: fixed;
+  left: 0px;
+  top: 0px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 1);
+}
+
+.breadcrumbs__item--active  .breadcrumbs__link{
+  color: #333;
+}

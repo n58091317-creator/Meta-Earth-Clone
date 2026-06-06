@@ -1,0 +1,10 @@
+syntax = "proto3";
+package stchain.rollapp.kyc;
+
+option go_package = "github.com/st-chain/rollapp/x/kyc/types";
+
+message Did {
+  string address = 1; 
+  string did = 2; 
+}
+
