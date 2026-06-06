@@ -5,6 +5,7 @@ import {
   OfflineSigner,
 } from '@cosmjs/proto-signing';
 import { SigningStargateClient, GasPrice } from '@cosmjs/stargate';
+import { Type, Field, Root } from 'protobufjs';
 import { log, logError } from './logger';
 import { WalletInfo } from './wallet';
 
@@ -21,14 +22,17 @@ const ADDRESS_PREFIX = 'me';
 const MSG_CHECKIN_TYPE_URL = '/metaearth.checkin.v1beta1.MsgCheckin';
 
 /**
- * Minimal protobuf encoding for MsgCheckin { creator: string }.
- * Field 1, wire type 2 (length-delimited string).
+ * Build a protobufjs Type for MsgCheckin { creator: string }.
+ * This satisfies the GeneratedType interface expected by @cosmjs/proto-signing Registry.
  */
-function encodeMsgCheckin(creator: string): Uint8Array {
-  const creatorBytes = new TextEncoder().encode(creator);
-  const fieldTag = 0x0a; // (field 1 << 3) | wire type 2
-  return new Uint8Array([fieldTag, creatorBytes.length, ...creatorBytes]);
+function buildMsgCheckinType(): Type {
+  const root = new Root();
+  const MsgCheckin = new Type('MsgCheckin').add(new Field('creator', 1, 'string'));
+  root.add(MsgCheckin);
+  return MsgCheckin;
 }
+
+const MsgCheckinType = buildMsgCheckinType();
 
 /**
  * Build an OfflineSigner for the given WalletInfo.
@@ -60,17 +64,7 @@ export async function performCheckin(
     const signer = await buildSigner(wallet);
 
     const registry = new Registry();
-    registry.register(MSG_CHECKIN_TYPE_URL, {
-      encode(value: { creator: string }) {
-        return encodeMsgCheckin(value.creator);
-      },
-      decode(data: Uint8Array) {
-        return { creator: new TextDecoder().decode(data.slice(2)) };
-      },
-      fromJSON(value: any) { return value; },
-      toJSON(value: any) { return value; },
-      create(value: any) { return value; },
-    } as any);
+    registry.register(MSG_CHECKIN_TYPE_URL, MsgCheckinType as any);
 
     const gasPrice = GasPrice.fromString('0.02ume');
     const client = await SigningStargateClient.connectWithSigner(
