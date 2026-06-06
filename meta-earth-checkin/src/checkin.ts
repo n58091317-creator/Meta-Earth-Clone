@@ -12,6 +12,7 @@ import { WalletInfo } from './wallet';
 /**
  * Meta Earth hub RPC endpoints.
  * Source: meta-earth-js-sdk/src/config/define.ts
+ * The daily check-in (MsgNewRecord) is on the me-hub chain.
  */
 const RPC_ENDPOINTS: Record<string, string> = {
   mainnet: 'http://118.175.0.247:16657',
@@ -19,24 +20,53 @@ const RPC_ENDPOINTS: Record<string, string> = {
 };
 
 const ADDRESS_PREFIX = 'me';
-const MSG_CHECKIN_TYPE_URL = '/metaearth.checkin.v1beta1.MsgCheckin';
 
 /**
- * Build a protobufjs Type for MsgCheckin { creator: string }.
- * This satisfies the GeneratedType interface expected by @cosmjs/proto-signing Registry.
+ * MsgNewRecord type URL on the me-hub (metaearth.wstaking module).
+ * This is the actual "daily check-in" / record submission used by Meta Earth users.
+ *
+ * Fields (protobuf order):
+ *   1: actionNumber  — alphanumeric identifier, unique per submission
+ *   2: actionUrl     — URL for the record (e.g. a social media post)
+ *   3: from          — signer wallet address
  */
-function buildMsgCheckinType(): Type {
+const MSG_TYPE_URL = '/metaearth.wstaking.MsgNewRecord';
+
+function buildMsgNewRecordType(): Type {
   const root = new Root();
-  const MsgCheckin = new Type('MsgCheckin').add(new Field('creator', 1, 'string'));
-  root.add(MsgCheckin);
-  return MsgCheckin;
+  const MsgNewRecord = new Type('MsgNewRecord')
+    .add(new Field('actionNumber', 1, 'string'))
+    .add(new Field('actionUrl', 2, 'string'))
+    .add(new Field('from', 3, 'string'));
+  root.add(MsgNewRecord);
+  return MsgNewRecord;
 }
 
-const MsgCheckinType = buildMsgCheckinType();
+const MsgNewRecordType = buildMsgNewRecordType();
+
+/**
+ * Generate a daily action number. Uses the current UTC date so each day
+ * produces a unique record for the address (but is idempotent within one day).
+ * Override with the ACTION_NUMBER env var for a fully custom value.
+ */
+function getActionNumber(): string {
+  const custom = process.env.ACTION_NUMBER;
+  if (custom) return custom;
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10).replace(/-/g, '');
+  return `DailyCheckIn${date}`;
+}
+
+/**
+ * Get the action URL for the record.
+ * Override with ACTION_URL env var.
+ */
+function getActionUrl(): string {
+  return process.env.ACTION_URL || 'https://metaearth.io';
+}
 
 /**
  * Build an OfflineSigner for the given WalletInfo.
- * Supports both mnemonic (BIP44 HD) and raw private key wallets.
  */
 async function buildSigner(wallet: WalletInfo): Promise<OfflineSigner> {
   if (wallet.privateKey) {
@@ -50,64 +80,67 @@ async function buildSigner(wallet: WalletInfo): Promise<OfflineSigner> {
 }
 
 /**
- * Perform a daily check-in for a single wallet.
+ * Perform a daily check-in (MsgNewRecord) for a single wallet.
  */
 export async function performCheckin(
   wallet: WalletInfo,
   network: string = 'mainnet'
 ): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  log(`Starting check-in for ${wallet.label} (${wallet.address})`);
+  const actionNumber = getActionNumber();
+  const actionUrl = getActionUrl();
 
-  const rpcUrl = RPC_ENDPOINTS[network] || RPC_ENDPOINTS.mainnet;
+  log(`Starting check-in for ${wallet.label} (${wallet.address})`);
+  log(`  actionNumber: ${actionNumber}`);
+  log(`  actionUrl:    ${actionUrl}`);
+
+  const rpcUrl = RPC_ENDPOINTS[network] ?? RPC_ENDPOINTS.mainnet;
 
   try {
     const signer = await buildSigner(wallet);
 
     const registry = new Registry();
-    registry.register(MSG_CHECKIN_TYPE_URL, MsgCheckinType as any);
+    registry.register(MSG_TYPE_URL, MsgNewRecordType as any);
 
-    const gasPrice = GasPrice.fromString('0.02ume');
     const client = await SigningStargateClient.connectWithSigner(
       rpcUrl,
       signer,
-      { registry, gasPrice }
+      { registry }
     );
 
     const msg = {
-      typeUrl: MSG_CHECKIN_TYPE_URL,
-      value: { creator: wallet.address },
+      typeUrl: MSG_TYPE_URL,
+      value: {
+        actionNumber,
+        actionUrl,
+        from: wallet.address,
+      },
+    };
+
+    // Chain enforces minimum fee of 10,000 umec regardless of gas used.
+    // Real on-chain txs use gas_limit=500,000 and pay ~10,000-11,000 umec.
+    const fee = {
+      amount: [{ denom: 'umec', amount: '12000' }],
+      gas: '500000',
     };
 
     const result = await client.signAndBroadcast(
       wallet.address,
       [msg],
-      'auto',
+      fee,
       'Daily check-in'
     );
 
     if (result.code !== 0) {
-      const raw = result.rawLog || '';
-      if (raw.toLowerCase().includes('already') || raw.toLowerCase().includes('duplicate')) {
-        log(`${wallet.label} already checked in today — skipping.`);
-        return { success: true, txHash: 'already-checked-in' };
-      }
-      throw new Error(`Broadcast failed (code ${result.code}): ${raw}`);
+      const raw = result.rawLog ?? '';
+      logError(`${wallet.label} check-in FAILED (code ${result.code}): ${raw}`);
+      return { success: false, error: `code ${result.code}: ${raw}` };
     }
 
     log(`${wallet.label} check-in SUCCESS. TX: ${result.transactionHash}`);
-    log(`   Explorer: https://explorer.metaearth.io/tx/${result.transactionHash}`);
     return { success: true, txHash: result.transactionHash };
 
   } catch (err: any) {
-    const message = err?.message || String(err);
-    if (
-      message.toLowerCase().includes('already') ||
-      message.toLowerCase().includes('duplicate') ||
-      message.toLowerCase().includes('checkin')
-    ) {
-      log(`${wallet.label} already checked in today — skipping.`);
-      return { success: true, txHash: 'already-checked-in' };
-    }
+    const message: string = err?.message ?? String(err);
     logError(`${wallet.label} check-in FAILED: ${message}`);
     return { success: false, error: message };
   }

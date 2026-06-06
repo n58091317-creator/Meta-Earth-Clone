@@ -1,0 +1,1 @@
+- [Meta Earth check-in mechanism](meta-earth-checkin.md) — real daily check-in is MsgNewRecord (wstaking), NOT MsgCheckin; fixed fee 12k umec required.
