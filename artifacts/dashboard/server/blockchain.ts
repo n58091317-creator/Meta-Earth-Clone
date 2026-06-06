@@ -11,9 +11,6 @@ import { StoredWallet } from './store';
 
 const HUB_RPC = 'http://118.175.0.247:16657';
 const HUB_REST = 'http://118.175.0.247:11317';
-const HUB_CHAIN_ID = 'me-chain';
-const HUB_FEE = { amount: [{ denom: 'umec', amount: '12000' }], gas: '200000' };
-
 const ROLLUP_RPC: Record<string, string> = {
   mainnet: 'http://118.175.0.247:23011',
   testnet: 'http://118.175.0.249:46657',
@@ -26,9 +23,25 @@ const ROLLUP_CHAIN_ID: Record<string, string> = {
   mainnet: 'mecheckin_101-1',
   testnet: 'mecheckin_100-1',
 };
+
+const HUB_FEE = { amount: [{ denom: 'umec', amount: '12000' }], gas: '200000' };
 const ROLLUP_FEE = { amount: [] as { denom: string; amount: string }[], gas: '200000' };
 const ADDRESS_PREFIX = 'me';
 const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
+const FETCH_TIMEOUT_MS = 12_000;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function fetchWithTimeout(url: string, ms = FETCH_TIMEOUT_MS): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function buildMsgCheckInType(): Type {
   const root = new Root();
@@ -78,6 +91,8 @@ async function buildRollupClient(wallet: StoredWallet, network = 'mainnet') {
   return { tmClient, client };
 }
 
+// ─── Rollup broadcast with sequence retry ────────────────────────────────────
+
 export interface TxResult {
   success: boolean;
   txHash?: string;
@@ -91,47 +106,50 @@ async function rollupBroadcast(
   memo = '',
   network = 'mainnet'
 ): Promise<TxResult> {
-  const { tmClient, client } = await buildRollupClient(wallet, network);
-  const chainId = ROLLUP_CHAIN_ID[network] ?? ROLLUP_CHAIN_ID.mainnet;
-
-  let accountNumber = 0;
-  let sequence = 0;
   try {
-    const acct = await client.getSequence(wallet.address);
-    accountNumber = acct.accountNumber;
-    sequence = acct.sequence;
-  } catch { /* new account, default to 0 */ }
+    const { tmClient, client } = await buildRollupClient(wallet, network);
+    const chainId = ROLLUP_CHAIN_ID[network] ?? ROLLUP_CHAIN_ID.mainnet;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const signed = await client.sign(wallet.address, msgs, ROLLUP_FEE, memo, {
-      accountNumber,
-      sequence,
-      chainId,
-    });
-    const txBytes = encodeTxRaw(signed);
-    const res = await tmClient.broadcastTxSync({ tx: txBytes });
-    const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
+    let accountNumber = 0;
+    let sequence = 0;
+    try {
+      const acct = await client.getSequence(wallet.address);
+      accountNumber = acct.accountNumber;
+      sequence = acct.sequence;
+    } catch { /* new account, default 0 */ }
 
-    if (res.code === 0) return { success: true, txHash };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const signed = await client.sign(wallet.address, msgs, ROLLUP_FEE, memo, {
+        accountNumber,
+        sequence,
+        chainId,
+      });
+      const txBytes = encodeTxRaw(signed);
+      const res = await tmClient.broadcastTxSync({ tx: txBytes });
+      const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
 
-    const log = res.log ?? '';
-    if (res.code === 32) {
-      const match = log.match(/expected (\d+)/);
-      if (match) {
-        sequence = parseInt(match[1], 10);
-        continue;
+      if (res.code === 0) return { success: true, txHash };
+
+      const log = res.log ?? '';
+      if (res.code === 32) {
+        const match = log.match(/expected (\d+)/);
+        if (match) { sequence = parseInt(match[1], 10); continue; }
       }
+      return { success: false, error: `code ${res.code}: ${log}` };
     }
-    return { success: false, error: `code ${res.code}: ${log}` };
+    return { success: false, error: 'Sequence retry limit exceeded' };
+  } catch (err: any) {
+    return { success: false, error: err?.message ?? String(err) };
   }
-  return { success: false, error: 'Sequence retry limit exceeded' };
 }
 
 // ─── Balance Queries ──────────────────────────────────────────────────────────
 
 export async function getHubBalance(address: string): Promise<number> {
   try {
-    const res = await fetch(`${HUB_REST}/cosmos/bank/v1beta1/balances/${address}?pagination.limit=20`);
+    const res = await fetchWithTimeout(
+      `${HUB_REST}/cosmos/bank/v1beta1/balances/${address}?pagination.limit=20`
+    );
     const json = (await res.json()) as any;
     const coin = (json.balances ?? []).find((b: any) => b.denom === 'umec');
     return coin ? parseInt(coin.amount, 10) : 0;
@@ -145,9 +163,14 @@ export interface Coin { denom: string; amount: number }
 export async function getRollupBalances(address: string, network = 'mainnet'): Promise<Coin[]> {
   try {
     const rest = ROLLUP_REST[network] ?? ROLLUP_REST.mainnet;
-    const res = await fetch(`${rest}/cosmos/bank/v1beta1/balances/${address}?pagination.limit=50`);
+    const res = await fetchWithTimeout(
+      `${rest}/cosmos/bank/v1beta1/balances/${address}?pagination.limit=50`
+    );
     const json = (await res.json()) as any;
-    return (json.balances ?? []).map((b: any) => ({ denom: b.denom, amount: parseInt(b.amount, 10) }));
+    return (json.balances ?? []).map((b: any) => ({
+      denom: b.denom,
+      amount: parseInt(b.amount, 10),
+    }));
   } catch {
     return [];
   }
@@ -155,7 +178,9 @@ export async function getRollupBalances(address: string, network = 'mainnet'): P
 
 export async function getStakingRewards(address: string): Promise<number> {
   try {
-    const res = await fetch(`${HUB_REST}/cosmos/distribution/v1beta1/delegators/${address}/rewards`);
+    const res = await fetchWithTimeout(
+      `${HUB_REST}/cosmos/distribution/v1beta1/delegators/${address}/rewards`
+    );
     const json = (await res.json()) as any;
     const total = (json.total ?? []).find((c: any) => c.denom === 'umec');
     return total ? Math.floor(parseFloat(total.amount)) : 0;
@@ -166,7 +191,9 @@ export async function getStakingRewards(address: string): Promise<number> {
 
 export async function getStakingDelegations(address: string): Promise<string[]> {
   try {
-    const res = await fetch(`${HUB_REST}/cosmos/staking/v1beta1/delegations/${address}`);
+    const res = await fetchWithTimeout(
+      `${HUB_REST}/cosmos/staking/v1beta1/delegations/${address}`
+    );
     const json = (await res.json()) as any;
     return (json.delegation_responses ?? [])
       .map((d: any) => d.delegation?.validator_address)
@@ -177,10 +204,10 @@ export async function getStakingDelegations(address: string): Promise<string[]> 
 }
 
 export interface WalletBalances {
-  hub: number;
-  rollup: Coin[];
-  rollupTotal: number;
-  staking: number;
+  hub: number;       // umec
+  rollup: Coin[];    // each coin in smallest unit
+  rollupTotal: number; // total rollup in umec-equivalent smallest units
+  staking: number;   // umec rewards
 }
 
 export async function getAllBalances(address: string, network = 'mainnet'): Promise<WalletBalances> {
@@ -301,7 +328,6 @@ export async function autoSweep(
   network = 'mainnet'
 ): Promise<SweepStepResult[]> {
   const results: SweepStepResult[] = [];
-
   const push = (step: string, r: TxResult) => results.push({ step, ...r });
 
   if (mode === 'all' || mode === 'staking') {
@@ -322,9 +348,11 @@ export async function autoSweep(
       const r = await hubSend(wallet, destination, available);
       push('Sweep Hub Balance', r);
     } else {
+      const reserveMec = ((minHubReserveUmec + txFee) / 1_000_000).toFixed(6);
+      const balMec = (hubBalance / 1_000_000).toFixed(6);
       push('Sweep Hub Balance', {
         success: false,
-        error: `Hub balance ${hubBalance.toLocaleString()} umec is below reserve (${minHubReserveUmec.toLocaleString()} + ${txFee.toLocaleString()} fee)`,
+        error: `Hub balance ${balMec} MEC is below reserve threshold ${reserveMec} MEC`,
       });
     }
   }

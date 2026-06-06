@@ -7,9 +7,10 @@ export function ExportTab() {
   const { wallets, setWallets } = useApp();
   const [format, setFormat] = useState<ExportFormat>('csv');
   const [category, setCategory] = useState<ExportCategory>('all');
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
-    api.getWallets().then(setWallets);
+    api.getWallets().then(setWallets).catch(() => {});
   }, [setWallets]);
 
   const count = {
@@ -18,8 +19,22 @@ export function ExportTab() {
     unverified: wallets.filter(w => !w.verified).length,
   };
 
-  const handleDownload = () => {
-    window.location.href = api.exportUrl(format, category);
+  const handleDownload = async () => {
+    const exportCount = count[category];
+    if (exportCount === 0) return;
+    setDownloading(true);
+    try {
+      const url = api.exportUrl(format, category);
+      // Use anchor click to trigger file download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wallets-${category}-${Date.now()}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } finally {
+      setTimeout(() => setDownloading(false), 1000);
+    }
   };
 
   return (
@@ -28,36 +43,39 @@ export function ExportTab() {
         <h2 className="text-sm font-semibold text-white">Export Wallet Data</h2>
 
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-300">
-          ⚠️ <strong>Security notice:</strong> Exported files contain private keys and mnemonic phrases. Store them securely and never share them.
+          ⚠️ <strong>Security notice:</strong> Exported files contain private keys and/or mnemonic phrases in plain text. Store them in a secure, encrypted location and never share them.
         </div>
 
         {/* Format */}
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">Format</label>
+          <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">File Format</label>
           <div className="flex gap-2">
             {(['csv', 'json'] as ExportFormat[]).map(f => (
               <button
                 key={f}
                 onClick={() => setFormat(f)}
-                className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   format === f ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                 }`}
               >
-                {f.toUpperCase()}
+                {f === 'csv' ? '📊 CSV' : '📋 JSON'}
               </button>
             ))}
           </div>
+          <p className="text-xs text-slate-500">
+            {format === 'csv' ? 'Spreadsheet format. Opens in Excel, Google Sheets.' : 'Structured JSON array. Good for programmatic use.'}
+          </p>
         </div>
 
         {/* Category */}
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">Category</label>
+          <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">Filter Category</label>
           <div className="grid grid-cols-3 gap-2">
             {([
-              { id: 'all', label: 'All', desc: `${count.all} wallets` },
-              { id: 'verified', label: 'Verified', desc: `${count.verified} wallets` },
-              { id: 'unverified', label: 'Unverified', desc: `${count.unverified} wallets` },
-            ] as { id: ExportCategory; label: string; desc: string }[]).map(c => (
+              { id: 'all' as ExportCategory, label: '📁 All', desc: `${count.all} wallets` },
+              { id: 'verified' as ExportCategory, label: '✅ Verified', desc: `${count.verified} wallets` },
+              { id: 'unverified' as ExportCategory, label: '⬜ Unverified', desc: `${count.unverified} wallets` },
+            ]).map(c => (
               <button
                 key={c.id}
                 onClick={() => setCategory(c.id)}
@@ -75,47 +93,62 @@ export function ExportTab() {
         </div>
 
         {/* Columns info */}
-        <div className="bg-slate-900 rounded-lg p-3 space-y-1">
-          <p className="text-xs font-medium text-slate-400 mb-2">Export includes columns:</p>
-          {['label', 'address', 'type', 'mnemonic', 'privateKey', 'verified', 'createdAt'].map(col => (
-            <span key={col} className="inline-block mr-2 mb-1 text-xs bg-slate-700 text-slate-300 rounded px-2 py-0.5 font-mono">{col}</span>
-          ))}
+        <div className="bg-slate-900 rounded-lg p-3">
+          <p className="text-xs font-medium text-slate-400 mb-2">Exported fields:</p>
+          <div className="flex flex-wrap gap-1">
+            {['label', 'address', 'type', 'mnemonic', 'privateKey', 'verified', 'createdAt'].map(col => (
+              <span key={col} className="text-xs bg-slate-700 text-slate-300 rounded px-2 py-0.5 font-mono">{col}</span>
+            ))}
+          </div>
         </div>
 
         <button
           onClick={handleDownload}
-          disabled={count[category] === 0}
+          disabled={count[category] === 0 || downloading}
           className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors"
         >
-          📥 Download {count[category]} wallet{count[category] !== 1 ? 's' : ''} as {format.toUpperCase()}
+          {downloading
+            ? '⏳ Preparing download…'
+            : count[category] === 0
+            ? 'No wallets in this category'
+            : `📥 Download ${count[category]} wallet${count[category] !== 1 ? 's' : ''} as ${format.toUpperCase()}`}
         </button>
       </div>
 
-      {/* Verified breakdown */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Wallet Breakdown</h3>
-        <div className="space-y-2">
-          {wallets.length === 0 ? (
-            <p className="text-sm text-slate-500">No wallets imported yet.</p>
-          ) : (
-            <>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 bg-slate-700 rounded-full h-2 overflow-hidden">
-                  <div
-                    className="h-full bg-green-500 transition-all"
-                    style={{ width: wallets.length ? `${(count.verified / wallets.length) * 100}%` : '0%' }}
-                  />
-                </div>
-                <span className="text-xs text-slate-400 w-32 text-right">
-                  {count.verified} verified / {count.unverified} unverified
-                </span>
+      {/* Breakdown */}
+      <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 space-y-3">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Wallet Breakdown</h3>
+        {wallets.length === 0 ? (
+          <p className="text-sm text-slate-500">No wallets imported yet.</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 bg-slate-700 rounded-full h-2 overflow-hidden">
+                <div
+                  className="h-full bg-green-500 transition-all duration-500"
+                  style={{ width: `${(count.verified / wallets.length) * 100}%` }}
+                />
               </div>
-              <p className="text-xs text-slate-500">
-                Wallets become verified after a successful check-in, transfer, or sweep operation.
-              </p>
-            </>
-          )}
-        </div>
+              <span className="text-xs text-slate-400 shrink-0">
+                {count.verified} verified / {count.unverified} unverified
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Wallets become <span className="text-green-400">verified</span> after a successful check-in, transfer, or sweep operation.
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              {[
+                { label: 'Mnemonics', count: wallets.filter(w => w.type === 'mnemonic').length, color: 'text-blue-400' },
+                { label: 'Private Keys', count: wallets.filter(w => w.type === 'privatekey').length, color: 'text-orange-400' },
+              ].map(row => (
+                <div key={row.label} className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{row.label}</p>
+                  <p className={`text-lg font-bold mt-0.5 ${row.color}`}>{row.count}</p>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -1,16 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import { useApp } from '../App';
-import type { Wallet } from '../types';
 
-function fmtUmec(n: number) {
-  if (n === 0) return '0';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(3) + ' MEC';
-  return (n / 1_000_000).toFixed(6) + ' MEC';
+// 1 MEC = 1,000,000 umec
+function fmtMec(umec: number): string {
+  const mec = umec / 1_000_000;
+  if (umec === 0) return '0 MEC';
+  if (mec >= 1) return mec.toFixed(3) + ' MEC';
+  return mec.toFixed(6) + ' MEC';
 }
 
 function shortAddr(a: string) {
-  return a.slice(0, 10) + '…' + a.slice(-6);
+  return a.slice(0, 12) + '…' + a.slice(-6);
 }
 
 export function WalletsTab() {
@@ -22,19 +23,27 @@ export function WalletsTab() {
   const [loadingBalances, setLoadingBalances] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const loadWallets = useCallback(async () => {
-    const ws = await api.getWallets();
-    setWallets(ws);
+    try {
+      const ws = await api.getWallets();
+      setWallets(ws);
+    } catch (e: any) {
+      setError(e.message);
+    }
   }, [setWallets]);
 
   useEffect(() => { loadWallets(); }, [loadWallets]);
 
   const refreshAllBalances = async () => {
     setLoadingBalances(true);
+    setError(null);
     try {
       const entries = await api.getBalances();
       entries.forEach(e => setBalance(e.id, e.balances));
+    } catch (e: any) {
+      setError('Balance refresh failed: ' + e.message);
     } finally {
       setLoadingBalances(false);
     }
@@ -45,6 +54,8 @@ export function WalletsTab() {
     try {
       const b = await api.getBalance(id);
       setBalance(id, b);
+    } catch (e: any) {
+      setError('Balance refresh failed: ' + e.message);
     } finally {
       setRefreshingId(null);
     }
@@ -58,6 +69,8 @@ export function WalletsTab() {
       const r = await api.importWallets(importText);
       setImportResult(r);
       if (r.imported > 0) await loadWallets();
+    } catch (e: any) {
+      setImportResult({ imported: 0, skipped: 0, errors: [e.message] });
     } finally {
       setImporting(false);
     }
@@ -81,13 +94,21 @@ export function WalletsTab() {
 
   return (
     <div className="space-y-4">
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-sm text-red-300 flex items-center gap-2">
+          <span>⚠️</span>
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-200">✕</button>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Wallets', value: wallets.length, color: 'text-blue-400' },
-          { label: 'Hub Balance', value: fmtUmec(totalHub), color: 'text-emerald-400' },
-          { label: 'Rollup Balance', value: fmtUmec(totalRollup), color: 'text-purple-400' },
-          { label: 'Staking Rewards', value: fmtUmec(totalStaking), color: 'text-amber-400' },
+          { label: 'Total Wallets', value: wallets.length.toString(), color: 'text-blue-400' },
+          { label: 'Hub Balance', value: fmtMec(totalHub), color: 'text-emerald-400' },
+          { label: 'Rollup Balance', value: fmtMec(totalRollup), color: 'text-purple-400' },
+          { label: 'Staking Rewards', value: fmtMec(totalStaking), color: 'text-amber-400' },
         ].map(s => (
           <div key={s.label} className="bg-slate-800 rounded-lg p-4 border border-slate-700">
             <p className="text-xs text-slate-400 mb-1">{s.label}</p>
@@ -123,9 +144,9 @@ export function WalletsTab() {
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Label</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Address</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Type</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Hub</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Rollup</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Staking</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Hub (MEC)</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Rollup (MEC)</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Staking (MEC)</th>
                 <th className="text-center px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Status</th>
                 <th className="text-center px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Actions</th>
               </tr>
@@ -159,13 +180,13 @@ export function WalletsTab() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-xs text-emerald-400">
-                      {b ? fmtUmec(b.hub) : <span className="text-slate-600">—</span>}
+                      {b ? fmtMec(b.hub) : <span className="text-slate-600">—</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-xs text-purple-400">
-                      {b ? fmtUmec(b.rollupTotal) : <span className="text-slate-600">—</span>}
+                      {b ? fmtMec(b.rollupTotal) : <span className="text-slate-600">—</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-xs text-amber-400">
-                      {b ? fmtUmec(b.staking) : <span className="text-slate-600">—</span>}
+                      {b ? fmtMec(b.staking) : <span className="text-slate-600">—</span>}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${w.verified ? 'bg-green-500/20 text-green-300' : 'bg-slate-600/50 text-slate-400'}`}>
