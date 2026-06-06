@@ -1,7 +1,7 @@
 import * as cron from 'node-cron';
 import * as dotenv from 'dotenv';
 import { log, logError } from './logger';
-import { loadMnemonicsFromEnv, importWallets, WalletInfo } from './wallet';
+import { loadAllWallets, WalletInfo } from './wallet';
 import { runCheckinForAll } from './checkin';
 
 dotenv.config();
@@ -13,15 +13,8 @@ async function main() {
   log('Meta Earth Check-in Bot starting...');
   log(`Network: ${NETWORK}`);
 
-  const mnemonics = loadMnemonicsFromEnv();
-  log(`Loaded ${mnemonics.length} wallet mnemonic(s) from environment.`);
-
-  const wallets: WalletInfo[] = await importWallets(mnemonics);
-
-  if (wallets.length === 0) {
-    logError('No wallets could be imported. Check your MNEMONIC secrets.');
-    process.exit(1);
-  }
+  const wallets: WalletInfo[] = await loadAllWallets();
+  log(`Loaded ${wallets.length} wallet(s).`);
 
   if (process.env.RUN_ON_START === 'true') {
     log('RUN_ON_START=true — running check-in now...');
@@ -39,7 +32,6 @@ async function main() {
   });
 
   log('Bot is running. Waiting for next scheduled check-in...');
-  log('Keep this process alive with Replit "Always On" or UptimeRobot.');
 }
 
 main().catch((err) => {

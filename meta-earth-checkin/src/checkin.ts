@@ -1,4 +1,9 @@
-import { DirectSecp256k1HdWallet, Registry } from '@cosmjs/proto-signing';
+import {
+  DirectSecp256k1HdWallet,
+  DirectSecp256k1Wallet,
+  Registry,
+  OfflineSigner,
+} from '@cosmjs/proto-signing';
 import { SigningStargateClient, GasPrice } from '@cosmjs/stargate';
 import { log, logError } from './logger';
 import { WalletInfo } from './wallet';
@@ -13,11 +18,6 @@ const RPC_ENDPOINTS: Record<string, string> = {
 };
 
 const ADDRESS_PREFIX = 'me';
-
-/**
- * MsgCheckin type URL for the x/checkin module.
- * Based on Cosmos SDK convention: /metaearth.checkin.v1beta1.MsgCheckin
- */
 const MSG_CHECKIN_TYPE_URL = '/metaearth.checkin.v1beta1.MsgCheckin';
 
 /**
@@ -28,6 +28,21 @@ function encodeMsgCheckin(creator: string): Uint8Array {
   const creatorBytes = new TextEncoder().encode(creator);
   const fieldTag = 0x0a; // (field 1 << 3) | wire type 2
   return new Uint8Array([fieldTag, creatorBytes.length, ...creatorBytes]);
+}
+
+/**
+ * Build an OfflineSigner for the given WalletInfo.
+ * Supports both mnemonic (BIP44 HD) and raw private key wallets.
+ */
+async function buildSigner(wallet: WalletInfo): Promise<OfflineSigner> {
+  if (wallet.privateKey) {
+    const keyBytes = Buffer.from(wallet.privateKey, 'hex');
+    return DirectSecp256k1Wallet.fromKey(new Uint8Array(keyBytes), ADDRESS_PREFIX);
+  }
+  if (wallet.mnemonic) {
+    return DirectSecp256k1HdWallet.fromMnemonic(wallet.mnemonic, { prefix: ADDRESS_PREFIX });
+  }
+  throw new Error(`${wallet.label}: no mnemonic or private key available`);
 }
 
 /**
@@ -42,9 +57,7 @@ export async function performCheckin(
   const rpcUrl = RPC_ENDPOINTS[network] || RPC_ENDPOINTS.mainnet;
 
   try {
-    const signer = await DirectSecp256k1HdWallet.fromMnemonic(wallet.mnemonic, {
-      prefix: ADDRESS_PREFIX,
-    });
+    const signer = await buildSigner(wallet);
 
     const registry = new Registry();
     registry.register(MSG_CHECKIN_TYPE_URL, {
@@ -52,15 +65,13 @@ export async function performCheckin(
         return encodeMsgCheckin(value.creator);
       },
       decode(data: Uint8Array) {
-        const creatorBytes = data.slice(2);
-        return { creator: new TextDecoder().decode(creatorBytes) };
+        return { creator: new TextDecoder().decode(data.slice(2)) };
       },
       fromJSON(value: any) { return value; },
       toJSON(value: any) { return value; },
       create(value: any) { return value; },
     } as any);
 
-    // 0.02 $ME per gas unit — matches SDK's gas_price constant
     const gasPrice = GasPrice.fromString('0.02ume');
     const client = await SigningStargateClient.connectWithSigner(
       rpcUrl,
@@ -82,10 +93,7 @@ export async function performCheckin(
 
     if (result.code !== 0) {
       const raw = result.rawLog || '';
-      if (
-        raw.toLowerCase().includes('already') ||
-        raw.toLowerCase().includes('duplicate')
-      ) {
+      if (raw.toLowerCase().includes('already') || raw.toLowerCase().includes('duplicate')) {
         log(`${wallet.label} already checked in today — skipping.`);
         return { success: true, txHash: 'already-checked-in' };
       }
@@ -98,7 +106,6 @@ export async function performCheckin(
 
   } catch (err: any) {
     const message = err?.message || String(err);
-
     if (
       message.toLowerCase().includes('already') ||
       message.toLowerCase().includes('duplicate') ||
@@ -107,7 +114,6 @@ export async function performCheckin(
       log(`${wallet.label} already checked in today — skipping.`);
       return { success: true, txHash: 'already-checked-in' };
     }
-
     logError(`${wallet.label} check-in FAILED: ${message}`);
     return { success: false, error: message };
   }
@@ -120,16 +126,14 @@ export async function runCheckinForAll(
   wallets: WalletInfo[],
   network: string = 'mainnet'
 ): Promise<void> {
-  log(`=== Running check-in for ${wallets.length} wallet(s) ===`);
+  log(`=== Running check-in for ${wallets.length} wallet(s) on ${network} ===`);
 
   const results: Array<{ wallet: string; success: boolean; error?: string }> = [];
 
   for (const wallet of wallets) {
     const result = await performCheckin(wallet, network);
     results.push({ wallet: wallet.label, ...result });
-    if (wallets.length > 1) {
-      await sleep(2000);
-    }
+    if (wallets.length > 1) await sleep(2000);
   }
 
   const succeeded = results.filter((r) => r.success).length;
@@ -147,14 +151,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ── Allow running this file directly for a one-off check-in ──────────────────
+// ── One-off run ───────────────────────────────────────────────────────────────
 if (require.main === module) {
   (async () => {
     require('dotenv').config();
-    const { loadMnemonicsFromEnv, importWallets } = require('./wallet');
+    const { loadAllWallets } = require('./wallet');
     const network = process.env.NETWORK || 'mainnet';
-    const mnemonics = loadMnemonicsFromEnv();
-    const wallets = await importWallets(mnemonics);
+    const wallets = await loadAllWallets();
     await runCheckinForAll(wallets, network);
     process.exit(0);
   })();

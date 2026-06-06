@@ -26,3 +26,9 @@ externalPort = 80
 [[ports]]
 localPort = 8081
 externalPort = 8081
+
+[userenv]
+
+[userenv.shared]
+NETWORK = "mainnet"
+RUN_ON_START = "true"
