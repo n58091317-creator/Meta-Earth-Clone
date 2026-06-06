@@ -44,7 +44,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/dashboard run start"
+args = "pnpm --filter @workspace/dashboard run dev"
 waitForPort = 5000
 
 [agent]
