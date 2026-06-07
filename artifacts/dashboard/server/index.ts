@@ -38,6 +38,14 @@ app.get('/*path', (_req, res) => {
 });
 
 async function start() {
+  // Listen immediately so the proxy can connect and API callers get proper
+  // JSON errors instead of the SPA HTML fallback while we initialize.
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[dashboard] Running at http://0.0.0.0:${PORT}`);
+    console.log(`[dashboard] Network: ${process.env.NETWORK ?? 'mainnet'}`);
+  });
+
+  // Run heavy init in the background — errors are logged but don't crash the server.
   try {
     await initDb();
     await migrateWalletsToFirestore();
@@ -47,11 +55,6 @@ async function start() {
   } catch (e) {
     console.error('[server] Startup error:', e);
   }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[dashboard] Running at http://0.0.0.0:${PORT}`);
-    console.log(`[dashboard] Network: ${process.env.NETWORK ?? 'mainnet'}`);
-  });
 }
 
 process.on('unhandledRejection', (reason) => {
