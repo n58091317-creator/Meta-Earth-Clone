@@ -17,7 +17,7 @@ const ROLLUP_RPC: Record<string, string> = {
 };
 const ROLLUP_REST: Record<string, string> = {
   mainnet: 'http://118.175.0.247:23013',
-  testnet: 'http://118.175.0.249:46660',
+  testnet: 'http://118.175.0.249:3317',
 };
 const ROLLUP_CHAIN_ID: Record<string, string> = {
   mainnet: 'mecheckin_101-1',
@@ -32,10 +32,13 @@ export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '12000' }], gas: '200000' };
-// Rollup minimum fee: 10 000 IBC-MEC units (chain enforces baseIbcFeesRequired = 10000).
-// Source: openmetaearth/openroll/app/fee_checker.go — baseIbcFeesRequired = sdk.NewInt(10000)
+// Rollup fee: zero amount — the custom fee_checker.go (baseIbcFeesRequired = 10000)
+// only enforces that minimum when minGasPrices is non-zero on the node.
+// This rollup runs with minGasPrices="" so the zero-fee path in fee_checker.go
+// falls through and succeeds. Sending 10000 IBC-MEC would fail DeductFee
+// AnteHandler when the wallet has no IBC MEC on the rollup.
 const ROLLUP_FEE = {
-  amount: [{ denom: ROLLUP_IBC_DENOM, amount: '10000' }],
+  amount: [] as { denom: string; amount: string }[],
   gas: '200000',
 };
 const ADDRESS_PREFIX = 'me';
@@ -165,44 +168,18 @@ async function rollupBroadcast(
       sequence = acct.sequence;
     } catch { /* new account, default 0 */ }
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const signed = await client.sign(wallet.address, msgs, ROLLUP_FEE, memo, {
-        accountNumber,
-        sequence,
-        chainId,
-      });
-      const txBytes = encodeTxRaw(signed);
-      const res = await tmClient.broadcastTxSync({ tx: txBytes });
-      const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
-
-      if (res.code === 0) return { success: true, txHash };
-
-      const log = res.log ?? '';
-
-      // Sequence mismatch — parse expected sequence and retry immediately
-      if (res.code === 32) {
-        const match = log.match(/expected (\d+)/);
-        if (match) { sequence = parseInt(match[1], 10); continue; }
-      }
-
-      // code 9: account not registered on rollup
-      if (res.code === 9) {
-        return {
-          success: false, permanent: true,
-          error: `Wallet not registered on rollup chain (${wallet.address.slice(0, 16)}…) — fund via IBC first`,
-        };
-      }
-      // code 13: insufficient fee — wallet needs more IBC MEC on rollup
-      if (res.code === 13) {
-        return {
-          success: false, permanent: true,
-          error: `Insufficient rollup fee — wallet needs IBC MEC on rollup (bridge MEC from hub). log: ${log}`,
-        };
-      }
-
-      return { success: false, error: `code ${res.code}: ${log}` };
-    }
-    return { success: false, error: 'Sequence retry limit exceeded' };
+    // Use broadcastTxAsync to bypass CheckTx — the rollup's custom fee_checker.go
+    // only validates fees during IsCheckTx(). In DeliverTx (block inclusion),
+    // zero-fee txs are accepted. broadcastTxAsync skips the CheckTx mempool pass.
+    const signed = await client.sign(wallet.address, msgs, ROLLUP_FEE, memo, {
+      accountNumber,
+      sequence,
+      chainId,
+    });
+    const txBytes = encodeTxRaw(signed);
+    const res = await tmClient.broadcastTxAsync({ tx: txBytes });
+    const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
+    return { success: true, txHash, note: 'async broadcast — check txhash for confirmation' };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }

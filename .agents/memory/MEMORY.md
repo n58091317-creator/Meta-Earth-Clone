@@ -1,2 +1,3 @@
-- [Meta Earth check-in mechanism](meta-earth-checkin.md) — real daily check-in is MsgNewRecord (wstaking), NOT MsgCheckin; fixed fee 12k umec required.
+- [Rollup check-in broadcast & fee](rollup-checkin-broadcast.md) — use broadcastTxAsync + zero fee; CheckTx enforces fees, DeliverTx does not (fee_checker.go IsCheckTx only).
+- [Rollup MsgCheckIn fields](rollup-checkin-fields.md) — rollup MsgCheckIn has 2 fields only; hub MsgCheckIn has 3 (timezone). They are different chains.
 - [Replit api-server artifact routing](replit-api-server-proxy.md) — Replit auto-creates an api-server on port 8080 that intercepts /api/* browser requests; must proxy it to the real server.

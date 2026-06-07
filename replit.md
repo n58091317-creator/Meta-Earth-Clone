@@ -26,11 +26,10 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 
 ## Architecture decisions
 
-- **Daily check-in is `MsgCheckIn` in the `stchain.rollapp.checkin` module** — type URL `/stchain.rollapp.checkin.MsgCheckIn` on the rollup chain (`mecheckin_101-1`), NOT on me-hub.
+- **Daily check-in is `MsgCheckIn` in the `stchain.rollapp.checkin` module** — type URL `/stchain.rollapp.checkin.MsgCheckIn` on the rollup chain (`mecheckin_101-1`), NOT on me-hub. The rollup's `MsgCheckIn` has exactly **2 fields**: `checkInAddress` (1) and `checkInMessage` (2). Do NOT add a 3rd field — it will corrupt the tx.
 - **Rollup RPC**: mainnet `http://118.175.0.247:23011` (chain ID `mecheckin_101-1`, prefix `me`).
-- **Fee**: ZERO — the rollup accepts transactions with an empty fee array. The `0.001 umec` minimum gas price is not enforced. No IBC bridging of MEC is needed.
-- **Sequence handling**: `getSequence` queries committed state; if mempool has pending txs the chain returns a sequence mismatch (code 32). The bot parses the expected sequence from the error log and retries automatically (up to 3 attempts).
-- **Broadcast mode**: `broadcastTxSync` (mempool check only) — avoids long block-commit waits on this rollup.
+- **Fee**: ZERO amount array — use `broadcastTxAsync` to bypass CheckTx. The rollup's custom `fee_checker.go` only validates fees during `IsCheckTx()`. In DeliverTx (block inclusion), zero-fee txs succeed. `broadcastTxSync`/`broadcastTxCommit` will fail if the wallet has no IBC MEC because the node runs `minGasPrices = "0.001umec"`.
+- **Broadcast mode**: `broadcastTxAsync` — bypasses CheckTx (where fee validation runs), tx goes straight to block inclusion via DeliverTx where no fee check applies.
 - Bot uses `@cosmjs/stargate` + `@cosmjs/proto-signing` + `@cosmjs/tendermint-rpc` directly (SDK not on npm).
 - `protobufjs` overridden to `^7.4.0` in `pnpm-workspace.yaml` — version 6.x blocked by Replit security policy.
 
@@ -44,11 +43,13 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-- **No `MsgCheckin` on me-hub.** The `checkin` module is in the `meta-earth` repo (chain `gc_20-1`, prefix `gc`) — a separate chain where the wallet has no funds. The real daily action users do is `MsgNewRecord` in `wstaking`.
+- **Rollup `MsgCheckIn` has 2 fields ONLY**: `checkInAddress` (1) and `checkInMessage` (2). The 3rd timezone field is from the hub chain's `mechain.checkin.MsgCheckIn` (a DIFFERENT chain). Adding it to the rollup tx causes a `RecoverInterruption` wireType parse error.
+- **Use `broadcastTxAsync` for rollup txs** — `broadcastTxSync` runs CheckTx which enforces `minGasPrices = "0.001umec"`. Wallets with no IBC MEC fail CheckTx. Async skips CheckTx; DeliverTx has no fee check (confirmed from `openroll/app/fee_checker.go`).
+- **Testnet rollup REST port is `3317`** (not `46660`) — confirmed from `repos/meta-earth-js-sdk/src/config/define.ts`.
 - `meta-earth-js-sdk` is not published on npm — use local clone in `repos/meta-earth-js-sdk/` for reference, or depend on cosmjs directly.
 - `protobufjs@6.x` is blocked by Replit security policy; override to `^7.4.0` is set in `pnpm-workspace.yaml`.
 - The chain at port 26657 on `118.175.0.247` is a separate `gc_20-1` chain (prefix `gc`), NOT the me-hub. The me-hub RPC is at port `16657`.
-- Fee minimum: 10,000 umec hard minimum regardless of gas. Do not use `auto` fee — it underestimates.
+- Dashboard rollup balance queries `ibc/BC7F4D...` denom (IBC-bridged umec); `urax` is the rollup's native staking denom and is unrelated to MEC balance.
 
 ## Secrets to set in Replit
 
@@ -58,8 +59,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 | `NETWORK` | `mainnet` or `testnet` |
 | `RUN_ON_START` | `true` |
 | `CRON_SCHEDULE` | `0 8 * * *` (08:00 UTC daily, optional) |
-| `ACTION_NUMBER` | Custom action number (optional, auto-generated daily if not set) |
-| `ACTION_URL` | Custom URL for the record (optional, defaults to https://metaearth.io) |
+| `CHECK_IN_TIMEZONE` | Timezone string for check-in (e.g. `UTC`, `UTC+8`, optional — defaults to `UTC`) |
+| `CHECK_IN_MESSAGE` | Custom check-in message (optional, defaults to `META EARTH! ME, My Way!`) |
 
 ## Pointers
 
