@@ -3,7 +3,7 @@ import { api } from '../api';
 import { useApp } from '../App';
 import type { TopupConfig, TopupRunSummary, TopupLogEntry } from '../types';
 
-function umecToMec(u: number) { return (u / 1_000_000).toFixed(4); }
+function umecToMec(u: number) { return (u / 100_000_000).toFixed(8); } // exponent 8
 function relTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60000);
@@ -26,16 +26,16 @@ const THRESHOLD_PRESETS = [
   { label: '100k (8 tx)', value: 100000 },
 ];
 const TOPUP_PRESETS = [
-  { label: '0.05 MEC', value: 50000 },
-  { label: '0.1 MEC', value: 100000 },
-  { label: '0.5 MEC', value: 500000 },
-  { label: '1 MEC', value: 1000000 },
+  { label: '0.05 MEC', value: 5_000_000 },
+  { label: '0.1 MEC',  value: 10_000_000 },
+  { label: '0.5 MEC',  value: 50_000_000 },
+  { label: '1 MEC',    value: 100_000_000 },
 ];
 const IBC_AMOUNT_PRESETS = [
-  { label: '0.05 MEC', value: 50000 },
-  { label: '0.1 MEC', value: 100000 },
-  { label: '0.25 MEC', value: 250000 },
-  { label: '0.5 MEC', value: 500000 },
+  { label: '0.05 MEC',  value: 5_000_000 },
+  { label: '0.1 MEC',   value: 10_000_000 },
+  { label: '0.25 MEC',  value: 25_000_000 },
+  { label: '0.5 MEC',   value: 50_000_000 },
 ];
 const IBC_THRESHOLD_PRESETS = [
   { label: '1k umec', value: 1000 },

@@ -368,12 +368,12 @@ router.get('/diagnose/:address', async (req, res) => {
     res.json({
       address,
       network: NETWORK,
-      hub: { balanceUmec: hubBalance, balanceMec: (hubBalance / 1e6).toFixed(6) },
+      hub: { balanceUmec: hubBalance, balanceMec: (hubBalance / 1e8).toFixed(8) },
       rollup: { coins: rollupBalances, total: rollupBalances.reduce((s, b) => s + b.amount, 0) },
       staking: {
         delegations,
         pendingRewardsUmec: stakingRewards,
-        pendingRewardsMec: (stakingRewards / 1e6).toFixed(6),
+        pendingRewardsMec: (stakingRewards / 1e8).toFixed(8),
         note: delegations.length > 0 && stakingRewards === 0
           ? 'Rewards API returned 0 (hub query bug) — withdrawal will still be attempted on-chain'
           : undefined,

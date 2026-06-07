@@ -3,12 +3,12 @@ import { api } from '../api';
 import { useApp } from '../App';
 import type { WalletStakingInfo, TxResult } from '../types';
 
-const UMEC_PER_MEC = 1_000_000;
+const UMEC_PER_MEC = 100_000_000; // exponent 8 per chain denom_metadata
 
 function fmtMec(umec: number): string {
   if (umec === 0) return '0 MEC';
   const mec = umec / UMEC_PER_MEC;
-  return mec >= 1 ? mec.toFixed(4) + ' MEC' : mec.toFixed(6) + ' MEC';
+  return mec >= 1 ? mec.toFixed(4) + ' MEC' : mec.toFixed(8) + ' MEC';
 }
 
 function shortVal(addr: string) {

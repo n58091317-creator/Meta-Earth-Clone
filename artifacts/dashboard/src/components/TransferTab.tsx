@@ -3,14 +3,14 @@ import { api } from '../api';
 import { useApp } from '../App';
 import type { TxResult } from '../types';
 
-const UMEC_PER_MEC = 1_000_000;
-const HUB_FEE_UMEC = 12_000; // 0.012 MEC
+const UMEC_PER_MEC = 100_000_000; // exponent 8 per chain denom_metadata
+const HUB_FEE_UMEC = 12_000; // 0.00012 MEC
 
 function fmtMec(umec: number): string {
   const mec = umec / UMEC_PER_MEC;
   if (umec === 0) return '0 MEC';
-  if (mec >= 1) return mec.toFixed(3) + ' MEC';
-  return mec.toFixed(6) + ' MEC';
+  if (mec >= 1) return mec.toFixed(4) + ' MEC';
+  return mec.toFixed(8) + ' MEC';
 }
 
 function mecToUmec(mec: string): number {
@@ -66,7 +66,7 @@ export function TransferTab() {
     if (!fromId || !to.trim() || !amount) return;
     const amountUmec = mecToUmec(amount);
     if (amountUmec <= 0) { setError('Enter a valid amount greater than 0'); return; }
-    if (chain === 'hub' && amountUmec < 1) { setError('Minimum hub transfer: 0.000001 MEC'); return; }
+    if (chain === 'hub' && amountUmec < 1) { setError('Minimum hub transfer: 0.00000001 MEC (1 umec)'); return; }
 
     setSending(true);
     setResult(null);
@@ -139,7 +139,7 @@ export function TransferTab() {
           </div>
           <p className="text-xs text-slate-500">
             {chain === 'hub'
-              ? 'Sends MEC on me-hub chain. Network fee: 0.012 MEC deducted from sender.'
+              ? 'Sends MEC on me-hub chain. Network fee: 0.00012 MEC (12,000 umec) deducted from sender.'
               : 'Sends tokens on the rollup chain. Zero fee.'}
           </p>
         </div>
@@ -192,7 +192,7 @@ export function TransferTab() {
             <p className="text-xs text-slate-500">
               = {amountUmec.toLocaleString()} umec
               {chain === 'hub' && (
-                <span className="ml-2 text-amber-500">+ 0.012 MEC fee</span>
+                <span className="ml-2 text-amber-500">+ 0.00012 MEC fee</span>
               )}
             </p>
           )}
@@ -227,10 +227,10 @@ export function TransferTab() {
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4 space-y-2">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Denomination Reference</p>
         <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
-          <div>1 MEC = 1,000,000 umec</div>
-          <div>Hub fee: 0.012 MEC (12,000 umec)</div>
-          <div>Rollup fee: 0 MEC (zero fee)</div>
-          <div>Min transfer: 0.000001 MEC (1 umec)</div>
+          <div>1 MEC = 100,000,000 umec</div>
+          <div>Hub fee: 0.00012 MEC (12,000 umec)</div>
+          <div>Rollup fee: 0.0001 MEC (10,000 umec)</div>
+          <div>Min transfer: 0.00000001 MEC (1 umec)</div>
         </div>
       </div>
     </div>

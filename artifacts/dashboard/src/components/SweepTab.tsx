@@ -3,7 +3,7 @@ import { api } from '../api';
 import { useApp } from '../App';
 import type { SweepWalletResult, SweepMode } from '../types';
 
-const UMEC_PER_MEC = 1_000_000;
+const UMEC_PER_MEC = 100_000_000; // exponent 8 per chain denom_metadata
 
 const MODES: { id: SweepMode; label: string; desc: string }[] = [
   { id: 'all', label: '🔄 All-Inclusive', desc: 'Withdraw staking rewards → sweep hub balance (minus reserve) → sweep rollup tokens.' },
@@ -25,7 +25,7 @@ export function SweepTab() {
   const { wallets, setWallets } = useApp();
   const [mode, setMode] = useState<SweepMode>('all');
   const [destination, setDestination] = useState('');
-  const [minReserveMec, setMinReserveMec] = useState('0.05'); // 50,000 umec default
+  const [minReserveMec, setMinReserveMec] = useState('0.05'); // 5,000,000 umec default (0.05 MEC)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<SweepWalletResult[]>([]);

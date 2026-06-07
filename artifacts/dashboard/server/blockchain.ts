@@ -460,9 +460,9 @@ export async function rollupSendAll(
 
   // Confirmed low balance — show both queried total and sendable amount for clarity
   if (msgs.length === 0) {
-    const totalDisplay   = (ibcAmount / 1_000_000).toFixed(4);
-    const sendable       = Math.max(0, ibcAmount - ROLLUP_FEE_RESERVE);
-    const sendableDisplay = (sendable / 1_000_000).toFixed(4);
+    const totalDisplay    = (ibcAmount / 100_000_000).toFixed(8);
+    const sendable        = Math.max(0, ibcAmount - ROLLUP_FEE_RESERVE);
+    const sendableDisplay = (sendable / 100_000_000).toFixed(8);
     return {
       success: true,
       note: `Rollup balance ${totalDisplay} MEC queried; sendable after fee reserve: ${sendableDisplay} MEC (${sendable} units) — below 0.001 MEC dust threshold, skipped`,
@@ -473,7 +473,7 @@ export async function rollupSendAll(
 
   // code 5 = chain confirms insufficient funds (balance may be slightly stale) — skip gracefully
   if (!result.success && result.error?.includes('insufficient funds')) {
-    const totalDisplay = (ibcAmount / 1_000_000).toFixed(4);
+    const totalDisplay = (ibcAmount / 100_000_000).toFixed(8);
     return {
       success: true,
       note: `Rollup sweep skipped — on-chain balance (${totalDisplay} MEC REST-queried) insufficient; chain may have a stale view`,

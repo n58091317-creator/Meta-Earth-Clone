@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import { useApp } from '../App';
 
-// 1 MEC = 1,000,000 umec
+// 1 MEC = 100,000,000 umec  (exponent 8 per chain denom_metadata)
+const UMEC_PER_MEC = 100_000_000;
 function fmtMec(umec: number): string {
-  const mec = umec / 1_000_000;
+  const mec = umec / UMEC_PER_MEC;
   if (umec === 0) return '0 MEC';
-  if (mec >= 1) return mec.toFixed(3) + ' MEC';
-  return mec.toFixed(6) + ' MEC';
+  if (mec >= 1) return mec.toFixed(4) + ' MEC';
+  return mec.toFixed(8) + ' MEC';
 }
 
 function shortAddr(a: string) {

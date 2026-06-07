@@ -42,6 +42,12 @@ Standard Cosmos staking endpoints return 0 / code 13 runtime error.
 - IBC denom of hub MEC on rollup: `ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5`
 - Use `client.sendIbcTokens(sender, receiver, coin, 'transfer', 'channel-1', undefined, timeoutTimestampNs, HUB_FEE)`
 
+## MEC Denomination (critical — exponent 8, NOT 6)
+
+`1 MEC = 100,000,000 umec` (exponent 8, confirmed via `/cosmos/bank/v1beta1/denoms_metadata/umec`)
+All UI and server formatting must divide by `100_000_000`, NOT `1_000_000`.
+Using the wrong divisor inflates all displayed MEC values by 100×.
+
 ## Chain topology (mainnet 118.175.0.247)
 - Port 23011 (RPC) / 23013 (REST): rollup `mecheckin_101-1`, prefix `me` — where MsgCheckIn is submitted
 - Port 16657 (RPC) / 11317 (REST): me-hub, prefix `me` — holds wallet umec balance; staking via wstaking module
