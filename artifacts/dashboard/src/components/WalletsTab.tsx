@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import { useApp } from '../App';
 
-// 1 MEC = 100,000,000 umec  (exponent 8 per chain denom_metadata)
 const UMEC_PER_MEC = 100_000_000;
 function fmtMec(umec: number): string {
   const mec = umec / UMEC_PER_MEC;
@@ -15,16 +14,33 @@ function shortAddr(a: string) {
   return a.slice(0, 12) + '…' + a.slice(-6);
 }
 
+type ModalMode = 'single' | 'bulk' | null;
+
 export function WalletsTab() {
   const { wallets, setWallets, balances, setBalance } = useApp();
-  const [importing, setImporting] = useState(false);
-  const [importText, setImportText] = useState('');
-  const [showImport, setShowImport] = useState(false);
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
+
+  // Single add
+  const [singleLabel, setSingleLabel] = useState('');
+  const [singleKey, setSingleKey]   = useState('');
+  const [addingOne, setAddingOne]   = useState(false);
+  const [addResult, setAddResult]   = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
+
+  // Bulk import
+  const [importing, setImporting]     = useState(false);
+  const [importText, setImportText]   = useState('');
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
+
+  // Inline rename
+  const [renamingId, setRenamingId]     = useState<string | null>(null);
+  const [renameValue, setRenameValue]   = useState('');
+  const [savingRename, setSavingRename] = useState(false);
+
+  // Other state
   const [loadingBalances, setLoadingBalances] = useState(false);
-  const [refreshingId, setRefreshingId] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshingId, setRefreshingId]       = useState<string | null>(null);
+  const [copied, setCopied]                   = useState<string | null>(null);
+  const [error, setError]                     = useState<string | null>(null);
 
   const loadWallets = useCallback(async () => {
     try {
@@ -37,6 +53,77 @@ export function WalletsTab() {
 
   useEffect(() => { loadWallets(); }, [loadWallets]);
 
+  const openModal = (mode: ModalMode) => {
+    setModalMode(mode);
+    setAddResult(null); setSingleLabel(''); setSingleKey('');
+    setImportResult(null); setImportText('');
+  };
+
+  const closeModal = () => setModalMode(null);
+
+  // ── Single wallet add ────────────────────────────────────────────────────────
+  const handleAddOne = async () => {
+    const key = singleKey.trim();
+    if (!key) return;
+    setAddingOne(true);
+    setAddResult(null);
+    try {
+      const payload = singleLabel.trim() ? `${key}` : key;
+      const r = await api.importWallets(payload);
+      setAddResult(r);
+      if (r.imported > 0) {
+        // Apply the custom label to the newly imported wallet
+        if (singleLabel.trim()) {
+          const fresh = await api.getWallets();
+          const newest = fresh[fresh.length - 1];
+          if (newest) await api.renameWallet(newest.id, singleLabel.trim());
+        }
+        await loadWallets();
+      }
+    } catch (e: any) {
+      setAddResult({ imported: 0, skipped: 0, errors: [e.message] });
+    } finally {
+      setAddingOne(false);
+    }
+  };
+
+  // ── Bulk import ──────────────────────────────────────────────────────────────
+  const handleBulkImport = async () => {
+    if (!importText.trim()) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const r = await api.importWallets(importText);
+      setImportResult(r);
+      if (r.imported > 0) await loadWallets();
+    } catch (e: any) {
+      setImportResult({ imported: 0, skipped: 0, errors: [e.message] });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // ── Inline rename ────────────────────────────────────────────────────────────
+  const startRename = (id: string, currentLabel: string) => {
+    setRenamingId(id);
+    setRenameValue(currentLabel);
+  };
+
+  const saveRename = async (id: string) => {
+    if (!renameValue.trim()) return;
+    setSavingRename(true);
+    try {
+      await api.renameWallet(id, renameValue.trim());
+      await loadWallets();
+      setRenamingId(null);
+    } catch (e: any) {
+      setError('Rename failed: ' + e.message);
+    } finally {
+      setSavingRename(false);
+    }
+  };
+
+  // ── Other actions ────────────────────────────────────────────────────────────
   const refreshAllBalances = async () => {
     setLoadingBalances(true);
     setError(null);
@@ -62,21 +149,6 @@ export function WalletsTab() {
     }
   };
 
-  const handleImport = async () => {
-    if (!importText.trim()) return;
-    setImporting(true);
-    setImportResult(null);
-    try {
-      const r = await api.importWallets(importText);
-      setImportResult(r);
-      if (r.imported > 0) await loadWallets();
-    } catch (e: any) {
-      setImportResult({ imported: 0, skipped: 0, errors: [e.message] });
-    } finally {
-      setImporting(false);
-    }
-  };
-
   const handleDelete = async (id: string) => {
     if (!confirm('Remove this wallet from the dashboard?')) return;
     await api.deleteWallet(id);
@@ -89,16 +161,15 @@ export function WalletsTab() {
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const totalHub = wallets.reduce((s, w) => s + (balances[w.id]?.hub ?? 0), 0);
-  const totalRollup = wallets.reduce((s, w) => s + (balances[w.id]?.rollupTotal ?? 0), 0);
-  const totalStaking = wallets.reduce((s, w) => s + (balances[w.id]?.staking ?? 0), 0);
+  const totalHub     = wallets.reduce((s, w) => s + (balances[w.id]?.hub        ?? 0), 0);
+  const totalRollup  = wallets.reduce((s, w) => s + (balances[w.id]?.rollupTotal ?? 0), 0);
+  const totalStaking = wallets.reduce((s, w) => s + (balances[w.id]?.staking     ?? 0), 0);
 
   return (
     <div className="space-y-4">
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-sm text-red-300 flex items-center gap-2">
-          <span>⚠️</span>
-          <span>{error}</span>
+          <span>⚠️</span><span>{error}</span>
           <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-200">✕</button>
         </div>
       )}
@@ -106,10 +177,10 @@ export function WalletsTab() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Wallets', value: wallets.length.toString(), color: 'text-blue-400' },
-          { label: 'Hub Balance', value: fmtMec(totalHub), color: 'text-emerald-400' },
-          { label: 'Rollup Balance', value: fmtMec(totalRollup), color: 'text-purple-400' },
-          { label: 'Staking Rewards', value: fmtMec(totalStaking), color: 'text-amber-400' },
+          { label: 'Total Wallets',   value: wallets.length.toString(), color: 'text-blue-400' },
+          { label: 'Hub Balance',     value: fmtMec(totalHub),           color: 'text-emerald-400' },
+          { label: 'Rollup Balance',  value: fmtMec(totalRollup),        color: 'text-purple-400' },
+          { label: 'Staking Rewards', value: fmtMec(totalStaking),       color: 'text-amber-400' },
         ].map(s => (
           <div key={s.label} className="bg-slate-800 rounded-lg p-4 border border-slate-700">
             <p className="text-xs text-slate-400 mb-1">{s.label}</p>
@@ -121,10 +192,16 @@ export function WalletsTab() {
       {/* Actions */}
       <div className="flex gap-2 flex-wrap">
         <button
-          onClick={() => { setShowImport(true); setImportResult(null); setImportText(''); }}
+          onClick={() => openModal('single')}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
         >
-          + Import Wallets
+          + Add Wallet
+        </button>
+        <button
+          onClick={() => openModal('bulk')}
+          className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          ↑ Bulk Import
         </button>
         <button
           onClick={refreshAllBalances}
@@ -156,16 +233,47 @@ export function WalletsTab() {
               {wallets.length === 0 && (
                 <tr>
                   <td colSpan={9} className="text-center py-12 text-slate-500">
-                    No wallets yet — click <strong className="text-slate-300">Import Wallets</strong> to add some.
+                    No wallets yet — click <strong className="text-slate-300">+ Add Wallet</strong> to get started.
                   </td>
                 </tr>
               )}
               {wallets.map((w, i) => {
                 const b = balances[w.id];
+                const isRenaming = renamingId === w.id;
                 return (
                   <tr key={w.id} className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
                     <td className="px-4 py-3 text-slate-500 text-xs">{i + 1}</td>
-                    <td className="px-4 py-3 font-medium text-slate-200">{w.label}</td>
+                    <td className="px-4 py-3">
+                      {isRenaming ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={e => setRenameValue(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveRename(w.id); if (e.key === 'Escape') setRenamingId(null); }}
+                            className="bg-slate-700 text-white text-sm rounded px-2 py-0.5 border border-blue-500 focus:outline-none w-32"
+                          />
+                          <button
+                            onClick={() => saveRename(w.id)}
+                            disabled={savingRename}
+                            className="text-xs text-green-400 hover:text-green-300 px-1 disabled:opacity-40"
+                          >✓</button>
+                          <button
+                            onClick={() => setRenamingId(null)}
+                            className="text-xs text-slate-400 hover:text-white px-1"
+                          >✕</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => startRename(w.id, w.label)}
+                          className="font-medium text-slate-200 hover:text-blue-300 transition-colors text-left group"
+                          title="Click to rename"
+                        >
+                          {w.label}
+                          <span className="ml-1 text-slate-600 group-hover:text-blue-400 text-xs">✏</span>
+                        </button>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <button
                         onClick={() => copyAddr(w.address)}
@@ -221,17 +329,74 @@ export function WalletsTab() {
         </div>
       </div>
 
-      {/* Import Modal */}
-      {showImport && (
+      {/* ── Add Single Wallet Modal ─────────────────────────────────────────── */}
+      {modalMode === 'single' && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+              <h2 className="text-base font-semibold text-white">Add Wallet</h2>
+              <button onClick={closeModal} className="text-slate-400 hover:text-white transition-colors text-lg">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">Label <span className="text-slate-600">(optional)</span></label>
+                <input
+                  value={singleLabel}
+                  onChange={e => setSingleLabel(e.target.value)}
+                  placeholder="e.g. Main Wallet"
+                  className="w-full bg-slate-900 text-slate-200 text-sm rounded-lg border border-slate-600 px-3 py-2 focus:outline-none focus:border-blue-500 placeholder:text-slate-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">Mnemonic or Private Key</label>
+                <textarea
+                  value={singleKey}
+                  onChange={e => setSingleKey(e.target.value)}
+                  rows={4}
+                  placeholder={"12 or 24-word mnemonic phrase\n— or —\n64-character hex private key (with or without 0x)"}
+                  className="w-full bg-slate-900 text-slate-200 text-sm font-mono rounded-lg border border-slate-600 p-3 resize-none focus:outline-none focus:border-blue-500 placeholder:text-slate-600"
+                />
+              </div>
+              {addResult && (
+                <div className={`rounded-lg p-3 text-sm ${addResult.imported > 0 ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-amber-500/10 border border-amber-500/30 text-amber-300'}`}>
+                  {addResult.imported > 0
+                    ? `✓ Wallet added successfully!`
+                    : `⚠ ${addResult.skipped > 0 ? 'Wallet already exists.' : 'No valid wallet found.'}`}
+                  {addResult.errors.length > 0 && (
+                    <ul className="mt-1 text-xs text-red-300 list-disc list-inside">
+                      {addResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-2 justify-end pt-1">
+                <button onClick={closeModal} className="px-4 py-2 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors">
+                  Close
+                </button>
+                <button
+                  onClick={handleAddOne}
+                  disabled={addingOne || !singleKey.trim()}
+                  className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors"
+                >
+                  {addingOne ? 'Adding…' : 'Add Wallet'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk Import Modal ───────────────────────────────────────────────── */}
+      {modalMode === 'bulk' && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-2xl shadow-2xl">
             <div className="flex items-center justify-between p-5 border-b border-slate-700">
-              <h2 className="text-base font-semibold text-white">Import Wallets</h2>
-              <button onClick={() => setShowImport(false)} className="text-slate-400 hover:text-white transition-colors">✕</button>
+              <h2 className="text-base font-semibold text-white">Bulk Import Wallets</h2>
+              <button onClick={closeModal} className="text-slate-400 hover:text-white transition-colors text-lg">✕</button>
             </div>
             <div className="p-5 space-y-4">
               <p className="text-sm text-slate-400">
-                Paste one entry per line. Supports <strong className="text-slate-200">12/24-word mnemonics</strong> and <strong className="text-slate-200">64-character hex private keys</strong> (with or without 0x prefix). Duplicates are skipped automatically.
+                Paste one entry per line. Supports <strong className="text-slate-200">12/24-word mnemonics</strong> and <strong className="text-slate-200">64-character hex private keys</strong>. Duplicates are skipped automatically.
               </p>
               <textarea
                 value={importText}
@@ -251,11 +416,11 @@ export function WalletsTab() {
                 </div>
               )}
               <div className="flex gap-2 justify-end">
-                <button onClick={() => setShowImport(false)} className="px-4 py-2 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors">
+                <button onClick={closeModal} className="px-4 py-2 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors">
                   Close
                 </button>
                 <button
-                  onClick={handleImport}
+                  onClick={handleBulkImport}
                   disabled={importing || !importText.trim()}
                   className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors"
                 >
