@@ -46,6 +46,12 @@ export async function initDb() {
     )
   `);
   await pool.query(`INSERT INTO topup_config (id) VALUES (1) ON CONFLICT DO NOTHING`);
+  // Migrations — add IBC top-up columns if they don't exist yet
+  await pool.query(`ALTER TABLE topup_config ADD COLUMN IF NOT EXISTS ibc_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE topup_config ADD COLUMN IF NOT EXISTS ibc_threshold_umec INT NOT NULL DEFAULT 5000`);
+  await pool.query(`ALTER TABLE topup_config ADD COLUMN IF NOT EXISTS ibc_amount_umec INT NOT NULL DEFAULT 50000`);
+  // Add type column to topup_log for hub vs ibc entries
+  await pool.query(`ALTER TABLE topup_log ADD COLUMN IF NOT EXISTS tx_type TEXT NOT NULL DEFAULT 'hub'`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS topup_log (

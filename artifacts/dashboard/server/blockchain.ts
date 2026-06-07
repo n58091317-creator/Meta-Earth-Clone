@@ -30,6 +30,13 @@ const ADDRESS_PREFIX = 'me';
 const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 const FETCH_TIMEOUT_MS = 12_000;
 
+// IBC: hub channel-1 → rollup channel-0
+const IBC_HUB_CHANNEL    = 'channel-1';
+const IBC_SOURCE_PORT    = 'transfer';
+// IBC denom of hub MEC on the rollup chain
+export const ROLLUP_IBC_DENOM =
+  'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function fetchWithTimeout(url: string, ms = FETCH_TIMEOUT_MS): Promise<Response> {
@@ -312,6 +319,37 @@ export async function rollupSendAmount(
     },
   }];
   return rollupBroadcast(wallet, msgs, 'Transfer', network);
+}
+
+export async function ibcTransferToRollup(
+  masterWallet: StoredWallet,
+  targetAddress: string,
+  amountUmec: number
+): Promise<TxResult> {
+  try {
+    const client = await buildHubClient(masterWallet);
+    // Timeout: 10 minutes from now in nanoseconds
+    const timeoutTimestamp = BigInt(Date.now() + 10 * 60_000) * 1_000_000n;
+    // sendIbcTokens: senderAddress, recipientAddress, transferAmount, sourcePort,
+    //                sourceChannel, timeoutHeight, timeoutTimestamp, fee, memo
+    const result = await (client as any).sendIbcTokens(
+      masterWallet.address,
+      targetAddress,
+      { denom: 'umec', amount: String(amountUmec) },
+      IBC_SOURCE_PORT,
+      IBC_HUB_CHANNEL,
+      undefined,           // no height timeout — use timestamp only
+      timeoutTimestamp,
+      HUB_FEE,
+      'Rollup registration'
+    );
+    if (result.code !== 0) {
+      return { success: false, error: `IBC code ${result.code}: ${result.rawLog ?? ''}` };
+    }
+    return { success: true, txHash: result.transactionHash };
+  } catch (err: any) {
+    return { success: false, error: err?.message ?? String(err) };
+  }
 }
 
 export async function withdrawStakingRewards(wallet: StoredWallet): Promise<TxResult> {

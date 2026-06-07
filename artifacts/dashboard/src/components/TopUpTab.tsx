@@ -31,6 +31,18 @@ const TOPUP_PRESETS = [
   { label: '0.5 MEC', value: 500000 },
   { label: '1 MEC', value: 1000000 },
 ];
+const IBC_AMOUNT_PRESETS = [
+  { label: '0.05 MEC', value: 50000 },
+  { label: '0.1 MEC', value: 100000 },
+  { label: '0.25 MEC', value: 250000 },
+  { label: '0.5 MEC', value: 500000 },
+];
+const IBC_THRESHOLD_PRESETS = [
+  { label: '1k umec', value: 1000 },
+  { label: '5k umec', value: 5000 },
+  { label: '10k umec', value: 10000 },
+  { label: '20k umec', value: 20000 },
+];
 
 export function TopUpTab() {
   const { wallets } = useApp();
@@ -42,6 +54,9 @@ export function TopUpTab() {
     thresholdUmec: 25000,
     topupAmountUmec: 100000,
     runBeforeCheckin: true,
+    ibcEnabled: false,
+    ibcThresholdUmec: 5000,
+    ibcAmountUmec: 50000,
   });
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -264,6 +279,101 @@ export function TopUpTab() {
             </button>
           </div>
 
+          {/* ── IBC Rollup Registration ─────────────────────────────────── */}
+          <div className={`rounded-xl border p-5 space-y-4 ${
+            cfg.ibcEnabled
+              ? 'bg-purple-500/5 border-purple-500/30'
+              : 'bg-slate-800 border-slate-700'
+          }`}>
+            {/* Header + toggle */}
+            <div className="flex items-start gap-4">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                  <span>🌉</span> IBC Rollup Registration
+                  {cfg.ibcEnabled && (
+                    <span className="text-xs font-normal text-purple-400 bg-purple-500/15 border border-purple-500/30 rounded px-2 py-0.5">Active</span>
+                  )}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Wallets with no rollup balance can't pay check-in fees (error code 9 / 13). This IBC-bridges MEC from the hub to the rollup so those wallets can check in.
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Channel: hub <span className="font-mono text-purple-300">channel-1</span> → rollup <span className="font-mono text-purple-300">channel-0</span>
+                </p>
+              </div>
+              <button
+                onClick={() => saveConfig({ ibcEnabled: !cfg.ibcEnabled })}
+                disabled={saving}
+                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 mt-0.5 ${
+                  cfg.ibcEnabled ? 'bg-purple-600' : 'bg-slate-600'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                  cfg.ibcEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+
+            {/* IBC settings (only visible when enabled) */}
+            {cfg.ibcEnabled && (
+              <div className="grid grid-cols-2 gap-4 pt-1">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">IBC Trigger Threshold</label>
+                  <p className="text-xs text-slate-500">Top up rollup if IBC balance below this</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {IBC_THRESHOLD_PRESETS.map(p => (
+                      <button key={p.value}
+                        onClick={() => saveConfig({ ibcThresholdUmec: p.value })}
+                        className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                          cfg.ibcThresholdUmec === p.value
+                            ? 'bg-purple-600 border-purple-500 text-white'
+                            : 'bg-slate-700 border-slate-600 text-slate-300 hover:border-purple-500'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="number"
+                    value={cfg.ibcThresholdUmec}
+                    onChange={e => setCfg(c => ({ ...c, ibcThresholdUmec: parseInt(e.target.value) || 0 }))}
+                    onBlur={() => saveConfig({ ibcThresholdUmec: cfg.ibcThresholdUmec })}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-purple-500"
+                  />
+                  <p className="text-xs text-slate-500">{umecToMec(cfg.ibcThresholdUmec)} MEC rollup threshold</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">IBC Transfer Amount</label>
+                  <p className="text-xs text-slate-500">How much MEC to bridge per wallet</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {IBC_AMOUNT_PRESETS.map(p => (
+                      <button key={p.value}
+                        onClick={() => saveConfig({ ibcAmountUmec: p.value })}
+                        className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                          cfg.ibcAmountUmec === p.value
+                            ? 'bg-purple-600 border-purple-500 text-white'
+                            : 'bg-slate-700 border-slate-600 text-slate-300 hover:border-purple-500'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="number"
+                    value={cfg.ibcAmountUmec}
+                    onChange={e => setCfg(c => ({ ...c, ibcAmountUmec: parseInt(e.target.value) || 0 }))}
+                    onBlur={() => saveConfig({ ibcAmountUmec: cfg.ibcAmountUmec })}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-purple-500"
+                  />
+                  <p className="text-xs text-slate-500">{umecToMec(cfg.ibcAmountUmec)} MEC per IBC transfer</p>
+                </div>
+              </div>
+            )}
+          </div>
+
           {saveMsg && (
             <div className={`text-xs rounded-lg px-3 py-2 ${
               saveMsg.startsWith('Error')
@@ -302,53 +412,83 @@ export function TopUpTab() {
               <div className="space-y-3">
                 {/* Summary banner */}
                 <div className={`rounded-lg px-4 py-3 flex items-center gap-3 ${
-                  summary.failed > 0
+                  summary.failed > 0 || summary.ibcFailed > 0
                     ? 'bg-amber-500/10 border border-amber-500/30'
                     : 'bg-green-500/10 border border-green-500/30'
                 }`}>
-                  <span className="text-xl">{summary.failed > 0 ? '⚠️' : '✅'}</span>
-                  <div className="flex-1 text-sm">
+                  <span className="text-xl">{summary.failed > 0 || summary.ibcFailed > 0 ? '⚠️' : '✅'}</span>
+                  <div className="flex-1 text-sm space-y-0.5">
                     <p className={`font-semibold ${summary.failed > 0 ? 'text-amber-300' : 'text-green-300'}`}>
-                      {summary.toppedUp > 0
-                        ? `Topped up ${summary.toppedUp} wallet${summary.toppedUp !== 1 ? 's' : ''}`
-                        : 'All wallets already have enough balance'}
+                      Hub: {summary.toppedUp > 0
+                        ? `${summary.toppedUp} topped up`
+                        : 'all OK'}
                       {summary.failed > 0 && ` · ${summary.failed} failed`}
+                      {summary.ibcSent > 0 && (
+                        <span className="text-purple-300"> · IBC: {summary.ibcSent} bridged</span>
+                      )}
+                      {summary.ibcFailed > 0 && (
+                        <span className="text-amber-300"> · {summary.ibcFailed} IBC failed</span>
+                      )}
                     </p>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-400">
                       Master: {summary.masterLabel}
-                      {' · '}Before: {umecToMec(summary.masterBalanceBefore)} MEC
-                      {' → '}After: {umecToMec(summary.masterBalanceAfter)} MEC
-                      {summary.skipped > 0 && ` · ${summary.skipped} already OK`}
+                      {' · '}{umecToMec(summary.masterBalanceBefore)} → {umecToMec(summary.masterBalanceAfter)} MEC
                     </p>
                   </div>
                 </div>
 
                 {/* Per-wallet results */}
                 <div className="divide-y divide-slate-700/40 rounded-lg border border-slate-700 overflow-hidden">
-                  {summary.results.map(r => (
-                    <div key={r.walletId} className="flex items-center gap-3 px-4 py-2.5">
-                      <span className="text-sm shrink-0">
-                        {r.skipped ? '○' : r.success ? '✅' : '❌'}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-slate-300">{r.label}</p>
-                        {r.txHash && (
-                          <p className="text-xs text-slate-500 font-mono">{r.txHash.slice(0, 20)}…</p>
-                        )}
-                        {r.error && (
-                          <p className="text-xs text-red-400 truncate">{r.error}</p>
+                  {summary.results.map(r => {
+                    const hubIcon = r.skipped ? '○' : r.success ? '✅' : '❌';
+                    const hasIbc = r.ibcSuccess !== undefined;
+                    const ibcIcon = r.ibcSkipped ? '○' : r.ibcSuccess ? '🟣' : '❌';
+                    return (
+                      <div key={r.walletId} className="px-4 py-2.5">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm shrink-0">{hubIcon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-slate-300">{r.label}</p>
+                            {r.txHash && (
+                              <p className="text-xs text-slate-500 font-mono">{r.txHash.slice(0, 20)}…</p>
+                            )}
+                            {r.error && (
+                              <p className="text-xs text-red-400 truncate">{r.error}</p>
+                            )}
+                          </div>
+                          <div className="text-right text-xs text-slate-500 shrink-0">
+                            {r.skipped
+                              ? <span>{umecToMec(r.balanceBefore)} ✓</span>
+                              : r.success
+                              ? <span className="text-green-400">+{umecToMec(cfg.topupAmountUmec)} MEC</span>
+                              : <span className="text-red-400">{umecToMec(r.balanceBefore)} MEC</span>
+                            }
+                          </div>
+                        </div>
+                        {hasIbc && (
+                          <div className="flex items-center gap-3 mt-1 pl-7">
+                            <span className="text-xs shrink-0">{ibcIcon}</span>
+                            <div className="flex-1 min-w-0">
+                              {r.ibcTxHash && (
+                                <p className="text-xs text-purple-400 font-mono">{r.ibcTxHash.slice(0, 20)}… <span className="text-slate-500">IBC</span></p>
+                              )}
+                              {r.ibcError && (
+                                <p className="text-xs text-red-400 truncate">{r.ibcError}</p>
+                              )}
+                              {r.ibcSkipped && (
+                                <p className="text-xs text-slate-500">rollup {umecToMec(r.ibcBalanceBefore ?? 0)} MEC ✓</p>
+                              )}
+                            </div>
+                            <div className="text-right text-xs shrink-0">
+                              {!r.ibcSkipped && r.ibcSuccess && (
+                                <span className="text-purple-400">+{umecToMec(cfg.ibcAmountUmec)} IBC</span>
+                              )}
+                            </div>
+                          </div>
                         )}
                       </div>
-                      <div className="text-right text-xs text-slate-500 shrink-0">
-                        {r.skipped
-                          ? <span className="text-slate-500">{umecToMec(r.balanceBefore)} MEC ✓</span>
-                          : r.success
-                          ? <span className="text-green-400">+{umecToMec(summary.results.find(x => x.walletId === r.walletId) ? r.balanceBefore : 0)} MEC sent</span>
-                          : <span className="text-red-400">was {umecToMec(r.balanceBefore)} MEC</span>
-                        }
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -356,8 +496,10 @@ export function TopUpTab() {
 
           {/* Info box */}
           <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-4 py-3 text-xs text-slate-400 space-y-1">
-            <p><span className="text-slate-300 font-medium">How it works:</span> Before each scheduled check-in, the bot checks every wallet's hub balance. Any wallet below <span className="text-blue-400">{umecToMec(cfg.thresholdUmec)} MEC</span> receives <span className="text-blue-400">{umecToMec(cfg.topupAmountUmec)} MEC</span> from the master wallet. The hub fee is 12,000 umec (0.012 MEC) per check-in.</p>
-            <p>Each top-up transaction costs the master wallet {umecToMec(cfg.topupAmountUmec + 12000)} MEC ({umecToMec(cfg.topupAmountUmec)} sent + 0.0120 MEC fee). With {nonMasterWallets.length} wallets, a full top-up costs at most {umecToMec((cfg.topupAmountUmec + 12000) * nonMasterWallets.length)} MEC.</p>
+            <p><span className="text-slate-300 font-medium">Hub top-up:</span> Before each scheduled check-in, any wallet below <span className="text-blue-400">{umecToMec(cfg.thresholdUmec)} MEC</span> on the hub receives <span className="text-blue-400">{umecToMec(cfg.topupAmountUmec)} MEC</span> from the master wallet (costs {umecToMec(cfg.topupAmountUmec + 12000)} MEC per wallet including 0.012 MEC fee).</p>
+            {cfg.ibcEnabled && (
+              <p><span className="text-slate-300 font-medium">IBC registration:</span> Wallets with less than <span className="text-purple-400">{umecToMec(cfg.ibcThresholdUmec)} MEC</span> on the rollup chain receive <span className="text-purple-400">{umecToMec(cfg.ibcAmountUmec)} MEC</span> via IBC bridge (hub channel-1 → rollup). This registers the wallet on the rollup so it can pay check-in fees. Costs {umecToMec(cfg.ibcAmountUmec + 12000)} MEC per wallet from master.</p>
+            )}
           </div>
         </div>
       )}
@@ -380,7 +522,16 @@ export function TopUpTab() {
                   <div key={h.id} className="flex items-center gap-3 px-4 py-2.5">
                     <span className="text-sm shrink-0">{h.success ? '✅' : '❌'}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-slate-300">{h.wallet_label}</p>
+                      <p className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+                        {h.wallet_label}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-normal ${
+                          h.tx_type === 'ibc'
+                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                            : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                        }`}>
+                          {h.tx_type === 'ibc' ? '🌉 IBC' : '🔗 Hub'}
+                        </span>
+                      </p>
                       {h.tx_hash && (
                         <p className="text-xs text-slate-500 font-mono">{h.tx_hash.slice(0, 20)}…</p>
                       )}
@@ -389,7 +540,9 @@ export function TopUpTab() {
                       )}
                     </div>
                     <div className="text-right text-xs text-slate-500 shrink-0 space-y-0.5">
-                      <p className="text-blue-400">+{umecToMec(h.amount_umec)} MEC</p>
+                      <p className={h.tx_type === 'ibc' ? 'text-purple-400' : 'text-blue-400'}>
+                        +{umecToMec(h.amount_umec)} MEC
+                      </p>
                       <p>{fmtTime(h.executed_at)}</p>
                     </div>
                   </div>

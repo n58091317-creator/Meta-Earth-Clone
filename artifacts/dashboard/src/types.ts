@@ -103,18 +103,28 @@ export interface TopupConfig {
   thresholdUmec: number;
   topupAmountUmec: number;
   runBeforeCheckin: boolean;
+  /** IBC bridge: fund wallets on the rollup chain so they can pay check-in fees */
+  ibcEnabled: boolean;
+  ibcThresholdUmec: number;
+  ibcAmountUmec: number;
 }
 
 export interface TopupResult {
   walletId: string;
   label: string;
   address: string;
+  // Hub top-up fields
   balanceBefore: number;
   success: boolean;
   txHash?: string;
   error?: string;
   skipped?: boolean;
-  isMaster?: boolean;
+  // IBC registration fields
+  ibcBalanceBefore?: number;
+  ibcSuccess?: boolean;
+  ibcTxHash?: string;
+  ibcError?: string;
+  ibcSkipped?: boolean;
 }
 
 export interface TopupRunSummary {
@@ -122,6 +132,9 @@ export interface TopupRunSummary {
   toppedUp: number;
   skipped: number;
   failed: number;
+  ibcSent: number;
+  ibcSkipped: number;
+  ibcFailed: number;
   masterBalanceBefore: number;
   masterBalanceAfter: number;
   masterLabel: string;
@@ -137,4 +150,5 @@ export interface TopupLogEntry {
   error: string | null;
   amount_umec: number;
   balance_before: number;
+  tx_type: 'hub' | 'ibc';
 }
