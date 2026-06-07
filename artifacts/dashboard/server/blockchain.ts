@@ -330,32 +330,110 @@ export async function autoSweep(
   const results: SweepStepResult[] = [];
   const push = (step: string, r: TxResult) => results.push({ step, ...r });
 
-  if (mode === 'all' || mode === 'staking') {
-    const r = await withdrawStakingRewards(wallet);
-    push('Withdraw Staking Rewards', r);
+  // ── Staking-only ──────────────────────────────────────────────────────────
+  if (mode === 'staking') {
+    push('Withdraw Staking Rewards', await withdrawStakingRewards(wallet));
+    return results;
   }
 
-  if (mode === 'all' || mode === 'rollup') {
-    const r = await rollupSendAll(wallet, destination, network);
-    push('Sweep Rollup Balance', r);
+  // ── Rollup-only ───────────────────────────────────────────────────────────
+  if (mode === 'rollup') {
+    push('Sweep Rollup Balance', await rollupSendAll(wallet, destination, network));
+    return results;
   }
 
-  if (mode === 'all' || mode === 'hub') {
+  // ── Hub-only ──────────────────────────────────────────────────────────────
+  if (mode === 'hub') {
     const hubBalance = await getHubBalance(wallet.address);
     const txFee = 12000;
     const available = hubBalance - minHubReserveUmec - txFee;
     if (available > 0) {
-      const r = await hubSend(wallet, destination, available);
-      push('Sweep Hub Balance', r);
+      push('Sweep Hub Balance', await hubSend(wallet, destination, available));
     } else {
-      const reserveMec = ((minHubReserveUmec + txFee) / 1_000_000).toFixed(6);
-      const balMec = (hubBalance / 1_000_000).toFixed(6);
-      push('Sweep Hub Balance', {
-        success: false,
-        error: `Hub balance ${balMec} MEC is below reserve threshold ${reserveMec} MEC`,
+      const reserved = ((minHubReserveUmec + txFee) / 1_000_000).toFixed(6);
+      const bal = (hubBalance / 1_000_000).toFixed(6);
+      push('Sweep Hub Balance', { success: false, error: `Hub balance ${bal} MEC is below reserve ${reserved} MEC` });
+    }
+    return results;
+  }
+
+  // ── All-inclusive: atomic claim + sweep ───────────────────────────────────
+  // Query hub balance, pending staking rewards, and validators in parallel
+  const [validators, hubBalance, stakingRewards] = await Promise.all([
+    getStakingDelegations(wallet.address),
+    getHubBalance(wallet.address),
+    getStakingRewards(wallet.address),
+  ]);
+
+  const TXN_FEE = 12000;
+  // Include pending staking rewards in available calculation
+  const totalAvailable = hubBalance + stakingRewards - minHubReserveUmec - TXN_FEE;
+
+  try {
+    const client = await buildHubClient(wallet);
+    const msgs: any[] = [];
+
+    // Claim all validator rewards first (if any delegations)
+    if (validators.length > 0 && stakingRewards > 0) {
+      for (const v of validators) {
+        msgs.push({
+          typeUrl: '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward',
+          value: { delegatorAddress: wallet.address, validatorAddress: v },
+        });
+      }
+    } else if (validators.length === 0) {
+      push('Withdraw Staking Rewards', { success: true, note: 'No delegations — nothing to withdraw' });
+    } else {
+      push('Withdraw Staking Rewards', { success: true, note: 'Staking rewards are 0 — nothing to withdraw' });
+    }
+
+    // Send hub balance (+ rewards if claimed above) to destination
+    if (totalAvailable > 0) {
+      msgs.push({
+        typeUrl: '/cosmos.bank.v1beta1.MsgSend',
+        value: {
+          fromAddress: wallet.address,
+          toAddress: destination,
+          amount: [{ denom: 'umec', amount: String(Math.floor(totalAvailable)) }],
+        },
       });
     }
+
+    if (msgs.length > 0) {
+      // Scale gas with number of messages (each MsgWithdrawDelegatorReward ~80k gas)
+      const gasAmount = 200000 + validators.length * 80000;
+      const fee = { amount: [{ denom: 'umec', amount: '12000' }], gas: String(gasAmount) };
+      const result = await client.signAndBroadcast(wallet.address, msgs, fee, '');
+
+      const hasWithdraw = validators.length > 0 && stakingRewards > 0;
+      const hasSend = totalAvailable > 0;
+      const stepLabel = hasWithdraw && hasSend
+        ? `Withdraw Staking Rewards (${(stakingRewards / 1e6).toFixed(4)} MEC) + Sweep Hub`
+        : hasWithdraw
+        ? 'Withdraw Staking Rewards'
+        : 'Sweep Hub Balance';
+
+      if (result.code !== 0) {
+        push(stepLabel, { success: false, error: `code ${result.code}: ${result.rawLog}` });
+      } else {
+        push(stepLabel, { success: true, txHash: result.transactionHash });
+      }
+    } else {
+      // Nothing to send
+      const reserved = ((minHubReserveUmec + TXN_FEE) / 1_000_000).toFixed(6);
+      const bal = (hubBalance / 1_000_000).toFixed(6);
+      const rewards = (stakingRewards / 1_000_000).toFixed(6);
+      push('Sweep Hub Balance', {
+        success: false,
+        error: `Hub balance ${bal} MEC + rewards ${rewards} MEC is below reserve + fee (${reserved} MEC)`,
+      });
+    }
+  } catch (err: any) {
+    push('Hub + Staking Operations', { success: false, error: err?.message ?? String(err) });
   }
+
+  // ── Rollup sweep (separate chain — always runs independently) ─────────────
+  push('Sweep Rollup Balance', await rollupSendAll(wallet, destination, network));
 
   return results;
 }
