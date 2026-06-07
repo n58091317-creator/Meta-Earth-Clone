@@ -88,6 +88,13 @@ externalPort = 8081
 [userenv.shared]
 NETWORK = "mainnet"
 RUN_ON_START = "true"
+VITE_FIREBASE_API_KEY = "AIzaSyD8AxG6rczvtF5N1FjerzwitaSLR00Pgys"
+VITE_FIREBASE_AUTH_DOMAIN = "meta-earth-dashboard.firebaseapp.com"
+VITE_FIREBASE_PROJECT_ID = "meta-earth-dashboard"
+VITE_FIREBASE_STORAGE_BUCKET = "meta-earth-dashboard.firebasestorage.app"
+VITE_FIREBASE_MESSAGING_SENDER_ID = "458596550832"
+VITE_FIREBASE_APP_ID = "1:458596550832:web:858da43458cbf77aa31375"
+FIREBASE_PROJECT_ID = "meta-earth-dashboard"
 
 [nix]
 channel = "stable-25_05"

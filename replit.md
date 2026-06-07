@@ -62,6 +62,15 @@ _Populate as you build — explicit user instructions worth remembering across s
 | `CHECK_IN_TIMEZONE` | Timezone string for check-in (e.g. `UTC`, `UTC+8`, optional — defaults to `UTC`) |
 | `CHECK_IN_MESSAGE` | Custom check-in message (optional, defaults to `META EARTH! ME, My Way!`) |
 
+## Firebase Auth (dashboard login)
+
+The dashboard is protected by Firebase Authentication. Config is stored as `VITE_FIREBASE_*` env vars.
+
+- **To add users**: Firebase Console → Authentication → Users → Add User (email + password)
+- **Project**: `meta-earth-dashboard`
+- The wallet private keys/mnemonics stay in PostgreSQL — they are **never sent to Firebase/Firestore**
+- Every API request carries a Firebase ID token; the backend (`server/auth.ts`) verifies it with `firebase-admin`
+
 ## Pointers
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details

@@ -6,10 +6,11 @@ import { initDb } from './db';
 import { loadEnvWallet } from './store';
 import { router } from './routes';
 import { startScheduler } from './scheduler';
+import { requireAuth } from './auth';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
-const app = express();
+const app  = express();
 const PORT = parseInt(process.env.PORT ?? '5000', 10);
 
 app.use(cors());
@@ -17,7 +18,8 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.text({ type: 'text/plain', limit: '10mb' }));
 
-app.use('/api', router);
+// All /api routes require a valid Firebase ID token
+app.use('/api', requireAuth, router);
 
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   const status = err.status ?? err.statusCode ?? 500;

@@ -4,12 +4,22 @@ import type {
   TopupConfig, TopupRunSummary, TopupLogEntry,
   WalletStakingInfo,
 } from './types';
+import { auth } from './firebase';
+
+/** Get current user's Firebase ID token (refreshes automatically if near-expiry). */
+async function getIdToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+  return user.getIdToken();
+}
 
 async function request<T>(url: string, init?: RequestInit & { headers?: Record<string, string> }): Promise<T> {
   const { headers: extraHeaders, ...rest } = init ?? {};
+  const token = await getIdToken();
   const res = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...extraHeaders,
     },
     ...rest,
@@ -25,14 +35,23 @@ export const api = {
   // Wallets
   getWallets: () => request<Wallet[]>('/api/wallets'),
 
-  importWallets: (rawText: string) => {
+  importWallets: async (rawText: string) => {
     const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
     const data = btoa(unescape(encodeURIComponent(text)));
-    return request<{ imported: number; skipped: number; errors: string[] }>('/api/wallets/import', {
+    const token = await getIdToken();
+    const res = await fetch('/api/wallets/import', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: new URLSearchParams({ data }).toString(),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error((err as any).error ?? res.statusText);
+    }
+    return res.json() as Promise<{ imported: number; skipped: number; errors: string[] }>;
   },
 
   deleteWallet: (id: string) =>
@@ -62,9 +81,9 @@ export const api = {
     }),
 
   // Scheduler
-  getSchedule: () => request<SchedulerState>('/api/checkin/schedule'),
-  triggerSchedule: () => request<{ started: boolean }>('/api/checkin/run', { method: 'POST' }),
-  getCheckinStats: () => request<WalletCheckinStats[]>('/api/checkin/stats'),
+  getSchedule:      () => request<SchedulerState>('/api/checkin/schedule'),
+  triggerSchedule:  () => request<{ started: boolean }>('/api/checkin/run', { method: 'POST' }),
+  getCheckinStats:  () => request<WalletCheckinStats[]>('/api/checkin/stats'),
   getCheckinHistory: (limit = 100) =>
     request<CheckinLogEntry[]>(`/api/checkin/history?limit=${limit}`),
 
@@ -109,7 +128,7 @@ export const api = {
       body: JSON.stringify({ walletId, validatorAddress, amountUmec }),
     }),
 
-  // Export
+  // Export — needs token in URL params since it's a direct link
   exportUrl: (format: 'csv' | 'json', category: 'all' | 'verified' | 'unverified') =>
     `/api/export?format=${format}&category=${category}`,
 
@@ -120,7 +139,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(cfg),
     }),
-  runTopup: () => request<TopupRunSummary>('/api/topup/run', { method: 'POST' }),
+  runTopup:        () => request<TopupRunSummary>('/api/topup/run', { method: 'POST' }),
   getTopupHistory: (limit = 100) =>
     request<TopupLogEntry[]>(`/api/topup/history?limit=${limit}`),
 };
