@@ -417,19 +417,28 @@ export async function hubSend(
   }
 }
 
+// Minimum sendable rollup amount = 0.01 MEC = 10 000 smallest units
+// Fee reservation = 10 000 (kept for future check-in fees)
+// So we only sweep if balance > 20 000 (fee_reserve + min_send)
+const ROLLUP_FEE_RESERVE = 10_000;
+const ROLLUP_MIN_SEND    = 10_000;
+
 export async function rollupSendAll(
   wallet: StoredWallet,
   to: string,
   network = 'mainnet'
 ): Promise<TxResult> {
   const balances = await getRollupBalances(wallet.address, network);
-  // Keep enough IBC MEC for fees; send the rest
-  const fee = 10000;
   const msgs: any[] = [];
   for (const b of balances) {
     if (b.amount <= 0) continue;
-    const sendAmount = b.denom === ROLLUP_IBC_DENOM ? b.amount - fee : b.amount;
-    if (sendAmount <= 0) continue;
+    // For IBC MEC: keep ROLLUP_FEE_RESERVE for future check-in fees, send the rest.
+    // For other denoms: send everything.
+    const sendAmount = b.denom === ROLLUP_IBC_DENOM
+      ? b.amount - ROLLUP_FEE_RESERVE
+      : b.amount;
+    // Only sweep if there's at least 0.01 MEC worth sending
+    if (sendAmount < ROLLUP_MIN_SEND) continue;
     msgs.push({
       typeUrl: '/cosmos.bank.v1beta1.MsgSend',
       value: {
@@ -439,8 +448,21 @@ export async function rollupSendAll(
       },
     });
   }
-  if (msgs.length === 0) return { success: true, note: 'No rollup balance to sweep (after fee reserve)' };
-  return rollupBroadcast(wallet, msgs, 'Rollup sweep', network);
+
+  // Nothing qualifies — skip gracefully so hub/staking steps still proceed
+  if (msgs.length === 0) {
+    return { success: true, note: 'Rollup balance below 0.01 MEC minimum — skipped' };
+  }
+
+  const result = await rollupBroadcast(wallet, msgs, 'Rollup sweep', network);
+
+  // Insufficient funds (code 5) means our balance estimate was stale — treat as skip
+  // so the caller (autoSweep) still shows the hub/staking steps as successful
+  if (!result.success && result.error?.includes('insufficient funds')) {
+    return { success: true, note: 'Rollup balance insufficient after fees — skipped' };
+  }
+
+  return result;
 }
 
 export async function rollupSendAmount(
