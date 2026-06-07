@@ -98,3 +98,4 @@ FIREBASE_PROJECT_ID = "meta-earth-dashboard"
 
 [nix]
 channel = "stable-25_05"
+packages = ["python313Packages.open-interpreter"]

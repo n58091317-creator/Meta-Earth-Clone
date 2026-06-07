@@ -150,6 +150,25 @@ export interface TxResult {
   permanent?: boolean;
 }
 
+/** Poll for tx delivery. Returns the tx result or null if not found within timeout. */
+async function pollTxResult(
+  tmClient: Tendermint37Client,
+  hash: Uint8Array,
+  attempts: number,
+  delayMs: number,
+): Promise<{ result: { code: number; log?: string } } | null> {
+  for (let i = 0; i < attempts; i++) {
+    await new Promise(r => setTimeout(r, delayMs));
+    try {
+      const txRes = await (tmClient as any).tx({ hash, prove: false });
+      return txRes;
+    } catch {
+      // Not yet included in a block — keep polling
+    }
+  }
+  return null;
+}
+
 async function rollupBroadcast(
   wallet: StoredWallet,
   msgs: any[],
@@ -166,7 +185,15 @@ async function rollupBroadcast(
       const acct = await client.getSequence(wallet.address);
       accountNumber = acct.accountNumber;
       sequence = acct.sequence;
-    } catch { /* new account, default 0 */ }
+    } catch {
+      // Account does not exist on-chain (never received tokens / never transacted).
+      // Broadcasting would produce a silent DeliverTx failure, so fail fast.
+      return {
+        success: false,
+        error: 'Account not found on chain — wallet must receive tokens to activate before it can check in',
+        permanent: true,
+      };
+    }
 
     // Use broadcastTxAsync to bypass CheckTx — the rollup's custom fee_checker.go
     // only validates fees during IsCheckTx(). In DeliverTx (block inclusion),
@@ -179,7 +206,20 @@ async function rollupBroadcast(
     const txBytes = encodeTxRaw(signed);
     const res = await tmClient.broadcastTxAsync({ tx: txBytes });
     const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
-    return { success: true, txHash, note: 'async broadcast — check txhash for confirmation' };
+
+    // Verify the tx actually landed in a block and DeliverTx succeeded.
+    // Poll 3 × 4 s = up to 12 s for block inclusion.
+    const confirmed = await pollTxResult(tmClient, res.hash, 3, 4_000);
+    if (confirmed === null) {
+      // Still not visible after 12 s — treat as transient so the scheduler retries.
+      return { success: false, txHash, error: 'Tx not confirmed within 12s — will retry' };
+    }
+    if (confirmed.result.code !== 0) {
+      const log = (confirmed.result.log ?? `DeliverTx code ${confirmed.result.code}`).slice(0, 200);
+      return { success: false, txHash, error: log };
+    }
+
+    return { success: true, txHash };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }
