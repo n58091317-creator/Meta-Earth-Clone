@@ -1,11 +1,14 @@
-import type { Wallet, BalanceEntry, CheckInResult, SweepWalletResult, SweepMode, TxResult } from './types';
+import type {
+  Wallet, BalanceEntry, CheckInResult, SweepWalletResult, SweepMode, TxResult,
+  SchedulerState, WalletCheckinStats, CheckinLogEntry,
+} from './types';
 
 async function request<T>(url: string, init?: RequestInit & { headers?: Record<string, string> }): Promise<T> {
   const { headers: extraHeaders, ...rest } = init ?? {};
   const res = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
-      ...extraHeaders,   // allows per-call override (e.g. text/plain)
+      ...extraHeaders,
     },
     ...rest,
   });
@@ -22,7 +25,6 @@ export const api = {
 
   importWallets: (rawText: string) => {
     const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-    // base64-encode so proxy content filters don't inspect seed words / private keys
     const data = btoa(unescape(encodeURIComponent(text)));
     return request<{ imported: number; skipped: number; errors: string[] }>('/api/wallets/import', {
       method: 'POST',
@@ -50,12 +52,19 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
 
-  // Check-in
+  // Manual check-in (selected wallets)
   checkin: (ids: string[]) =>
     request<CheckInResult[]>('/api/checkin', {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
+
+  // Scheduler
+  getSchedule: () => request<SchedulerState>('/api/checkin/schedule'),
+  triggerSchedule: () => request<{ started: boolean }>('/api/checkin/run', { method: 'POST' }),
+  getCheckinStats: () => request<WalletCheckinStats[]>('/api/checkin/stats'),
+  getCheckinHistory: (limit = 100) =>
+    request<CheckinLogEntry[]>(`/api/checkin/history?limit=${limit}`),
 
   // Transfer
   transfer: (params: {
@@ -82,7 +91,7 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
-  // Export (returns URL for download)
+  // Export
   exportUrl: (format: 'csv' | 'json', category: 'all' | 'verified' | 'unverified') =>
     `/api/export?format=${format}&category=${category}`,
 };

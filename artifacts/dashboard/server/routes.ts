@@ -22,6 +22,12 @@ import {
   autoSweep,
   SweepMode,
 } from './blockchain';
+import {
+  getSchedulerState,
+  runAllCheckins,
+  getCheckinHistory,
+  getAllWalletStats,
+} from './scheduler';
 
 export const router = Router();
 
@@ -203,6 +209,37 @@ router.post('/sweep', async (req, res) => {
     res.json(results);
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? 'Sweep failed' });
+  }
+});
+
+// ─── Scheduler: status / trigger / history / stats ───────────────────────────
+
+router.get('/checkin/schedule', (_req, res) => {
+  res.json(getSchedulerState());
+});
+
+router.post('/checkin/run', async (_req, res) => {
+  const state = getSchedulerState();
+  if (state.isRunning) return res.status(409).json({ error: 'Already running' });
+  // Fire-and-forget; return immediately so the UI can poll
+  runAllCheckins('manual').catch(e => console.error('[routes] Manual run error:', e));
+  res.json({ started: true });
+});
+
+router.get('/checkin/history', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit ?? '100'), 10), 500);
+    res.json(await getCheckinHistory(limit));
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? 'History query failed' });
+  }
+});
+
+router.get('/checkin/stats', async (_req, res) => {
+  try {
+    res.json(await getAllWalletStats());
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? 'Stats query failed' });
   }
 });
 

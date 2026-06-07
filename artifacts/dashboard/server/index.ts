@@ -2,9 +2,10 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'path';
 import * as dotenv from 'dotenv';
-import { initDb, pool } from './db';
+import { initDb } from './db';
 import { loadEnvWallet } from './store';
 import { router } from './routes';
+import { startScheduler } from './scheduler';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
@@ -12,15 +13,12 @@ const app = express();
 const PORT = parseInt(process.env.PORT ?? '5000', 10);
 
 app.use(cors());
-// Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-// Parse plain-text bodies (used by the wallet import endpoint)
 app.use(express.text({ type: 'text/plain', limit: '10mb' }));
 
 app.use('/api', router);
 
-// Global error handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   const status = err.status ?? err.statusCode ?? 500;
   const message = err.type === 'entity.parse.failed'
@@ -41,8 +39,9 @@ async function start() {
   try {
     await initDb();
     await loadEnvWallet();
+    startScheduler();
   } catch (e) {
-    console.error('[server] DB init error:', e);
+    console.error('[server] Startup error:', e);
   }
 
   app.listen(PORT, '0.0.0.0', () => {

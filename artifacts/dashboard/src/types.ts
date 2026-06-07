@@ -57,3 +57,40 @@ export interface SweepWalletResult {
 export type SweepMode = 'all' | 'hub' | 'rollup' | 'staking';
 export type ExportFormat = 'csv' | 'json';
 export type ExportCategory = 'all' | 'verified' | 'unverified';
+
+// ── Scheduler types ──────────────────────────────────────────────────────────
+
+export interface SchedulerRunResult {
+  walletId: string;
+  label: string;
+  success: boolean;
+  txHash?: string;
+  error?: string;
+}
+
+export interface SchedulerState {
+  cronExpr: string;
+  lastRunAt: string | null;
+  isRunning: boolean;
+  lastResults: SchedulerRunResult[];
+}
+
+export interface WalletCheckinStats {
+  wallet_id: string;
+  label: string;
+  address: string;
+  streak: number;
+  last_success_at: string | null;
+  checked_in_today: boolean;
+}
+
+export interface CheckinLogEntry {
+  id: number;
+  wallet_id: string;
+  label: string;
+  address: string;
+  executed_at: string;
+  success: boolean;
+  tx_hash: string | null;
+  error: string | null;
+}

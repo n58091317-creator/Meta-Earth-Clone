@@ -18,5 +18,22 @@ export async function initDb() {
       type        TEXT NOT NULL
     )
   `);
-  console.log('[db] Wallets table ready');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS checkin_log (
+      id          BIGSERIAL PRIMARY KEY,
+      wallet_id   TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+      executed_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC'),
+      success     BOOLEAN NOT NULL,
+      tx_hash     TEXT,
+      error       TEXT
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS checkin_log_wallet_date_idx
+    ON checkin_log (wallet_id, executed_at DESC)
+  `);
+
+  console.log('[db] Tables ready (wallets + checkin_log)');
 }
