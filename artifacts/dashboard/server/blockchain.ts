@@ -184,6 +184,13 @@ async function rollupBroadcast(
         if (match) { sequence = parseInt(match[1], 10); continue; }
       }
 
+      // code 5: insufficient funds — wallet has no IBC-MEC balance to pay fees
+      if (res.code === 5) {
+        return {
+          success: false, permanent: true,
+          error: `No IBC-MEC on rollup to pay fees — bridge MEC from hub via IBC top-up. log: ${log}`,
+        };
+      }
       // code 9: account not registered on rollup
       if (res.code === 9) {
         return {
