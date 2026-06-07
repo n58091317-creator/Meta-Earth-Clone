@@ -4,7 +4,7 @@ modules = ["nodejs-20", "go-1.21", "postgresql-16"]
 router = "application"
 deploymentTarget = "vm"
 run = ["pnpm", "--filter", "@workspace/dashboard", "run", "start"]
-build = ["bash", "-c", "pnpm install --frozen-lockfile && pnpm --filter @workspace/dashboard run build"]
+build = ["bash", "-c", "pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/dashboard run build"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
