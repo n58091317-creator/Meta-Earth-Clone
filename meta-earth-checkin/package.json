@@ -16,6 +16,7 @@
     "@cosmjs/encoding": "^0.32.4",
     "@cosmjs/proto-signing": "^0.32.4",
     "@cosmjs/stargate": "^0.32.4",
+    "@cosmjs/tendermint-rpc": "^0.32.4",
     "node-cron": "^3.0.3",
     "dotenv": "^16.4.5",
     "protobufjs": "^7.4.0"

@@ -84,3 +84,6 @@ externalPort = 8080
 [userenv.shared]
 NETWORK = "mainnet"
 RUN_ON_START = "true"
+
+[nix]
+channel = "stable-25_05"
