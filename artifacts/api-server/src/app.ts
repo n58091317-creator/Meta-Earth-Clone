@@ -47,9 +47,13 @@ app.use((req: Request, res: Response) => {
   });
 
   proxy.on("error", () => {
-    // Dashboard not yet ready — serve the SPA shell if it exists,
-    // otherwise return a 503 so the client can retry.
-    if (fs.existsSync(INDEX_HTML)) {
+    // Dashboard not yet ready. For API routes return JSON so the browser
+    // doesn't try to parse HTML as JSON. For page routes, serve the SPA shell.
+    if (req.path.startsWith("/api")) {
+      if (!res.headersSent) {
+        res.status(503).json({ error: "Service starting up — please retry in a few seconds" });
+      }
+    } else if (fs.existsSync(INDEX_HTML)) {
       res.sendFile(INDEX_HTML);
     } else {
       res.status(503).json({ error: "Starting up, please retry shortly" });
