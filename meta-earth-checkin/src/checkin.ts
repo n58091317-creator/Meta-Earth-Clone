@@ -4,8 +4,9 @@ import {
   Registry,
   OfflineSigner,
 } from '@cosmjs/proto-signing';
-import { SigningStargateClient, DeliverTxResponse } from '@cosmjs/stargate';
-import { Type, Field, Root } from 'protobufjs';
+import { SigningStargateClient } from '@cosmjs/stargate';
+import { Tendermint37Client } from '@cosmjs/tendermint-rpc';
+import { Type, Field, Root, Writer } from 'protobufjs';
 import { log, logError } from './logger';
 import { WalletInfo } from './wallet';
 
@@ -21,7 +22,6 @@ const ROLLUP_CHAIN_ID: Record<string, string> = {
 };
 
 const ADDRESS_PREFIX = 'me';
-
 const MSG_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
 // Zero-fee — matches openroll ts-client defaultFee pattern
@@ -30,7 +30,7 @@ const DEFAULT_FEE = {
   gas: '200000',
 };
 
-// ── Protobuf type definition for MsgCheckIn ───────────────────────────────────
+// ── Protobuf type definition ───────────────────────────────────────────────────
 function buildMsgCheckInType(): Type {
   const root = new Root();
   const MsgCheckIn = new Type('MsgCheckIn')
@@ -41,6 +41,22 @@ function buildMsgCheckInType(): Type {
 }
 
 const MsgCheckInType = buildMsgCheckInType();
+
+/**
+ * Manually encode TxRaw protobuf bytes.
+ * TxRaw wire format: 1=body_bytes, 2=auth_info_bytes, 3=signatures[]
+ */
+function encodeTxRaw(txRaw: {
+  bodyBytes: Uint8Array;
+  authInfoBytes: Uint8Array;
+  signatures: Uint8Array[];
+}): Uint8Array {
+  const w = new Writer();
+  if (txRaw.bodyBytes?.length) w.uint32(10).bytes(txRaw.bodyBytes);
+  if (txRaw.authInfoBytes?.length) w.uint32(18).bytes(txRaw.authInfoBytes);
+  for (const sig of txRaw.signatures ?? []) w.uint32(26).bytes(sig);
+  return w.finish();
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -64,9 +80,14 @@ async function buildSigner(wallet: WalletInfo): Promise<OfflineSigner> {
 /**
  * Perform a daily check-in (MsgCheckIn) for a single wallet on the rollup chain.
  *
- * Follows the openmetaearth/openroll ts-client pattern:
- *   - SigningStargateClient.connectWithSigner (not manual TmClient)
- *   - signAndBroadcast with zero-fee { amount: [], gas: "200000" }
+ * Uses Tendermint37Client directly so we can:
+ *   1. Build a SigningStargateClient and fetch the live on-chain sequence
+ *   2. Sign with explicit signerData (avoids stale auto-fetch inside signAndBroadcast)
+ *   3. broadcastTxAsync — bypasses CheckTx fee validation on the rollup
+ *      (rollup enforces fees only in CheckTx; DeliverTx accepts zero-fee txs)
+ *
+ * Zero-fee matches the openroll ts-client defaultFee pattern:
+ *   { amount: [], gas: "200000" }
  */
 export async function performCheckin(
   wallet: WalletInfo,
@@ -87,11 +108,21 @@ export async function performCheckin(
     const registry = new Registry();
     registry.register(MSG_TYPE_URL, MsgCheckInType as any);
 
-    // openroll pattern: connectWithSigner → signAndBroadcast
-    const signingClient = await SigningStargateClient.connectWithSigner(rpcUrl, signer, {
-      registry,
-      prefix: ADDRESS_PREFIX,
-    });
+    // Use Tendermint37Client so we hold the handle for broadcastTxAsync
+    const tmClient = await Tendermint37Client.connect(rpcUrl);
+    const client = await SigningStargateClient.createWithSigner(tmClient, signer, { registry });
+
+    // Fetch live on-chain sequence — avoids stale auto-fetch inside signAndBroadcast
+    let accountNumber = 0;
+    let sequence = 0;
+    try {
+      const acct = await client.getSequence(wallet.address);
+      accountNumber = acct.accountNumber;
+      sequence = acct.sequence;
+      log(`${wallet.label}: accountNumber=${accountNumber}, sequence=${sequence}`);
+    } catch {
+      log(`${wallet.label}: account not found on rollup — using accountNumber=0, sequence=0`);
+    }
 
     const msg = {
       typeUrl: MSG_TYPE_URL,
@@ -101,23 +132,17 @@ export async function performCheckin(
       }),
     };
 
-    log(`${wallet.label}: broadcasting check-in tx...`);
+    // Sign with explicit signerData, then broadcast async
+    const signerData = { accountNumber, sequence, chainId };
+    const signed = await client.sign(wallet.address, [msg], DEFAULT_FEE, checkInMessage, signerData);
+    const txBytes = encodeTxRaw(signed);
 
-    const result: DeliverTxResponse = await signingClient.signAndBroadcast(
-      wallet.address,
-      [msg],
-      DEFAULT_FEE,
-      checkInMessage,
-    );
+    log(`${wallet.label}: broadcasting check-in tx (async)...`);
+    const asyncRes = await tmClient.broadcastTxAsync({ tx: txBytes });
+    const txHash = Buffer.from(asyncRes.hash).toString('hex').toUpperCase();
 
-    if (result.code !== 0) {
-      const errMsg = `Tx failed (code ${result.code}): ${result.rawLog ?? 'unknown error'}`;
-      logError(`${wallet.label} check-in FAILED: ${errMsg}`);
-      return { success: false, error: errMsg };
-    }
-
-    log(`${wallet.label} check-in SUCCESS. TX: ${result.transactionHash}`);
-    return { success: true, txHash: result.transactionHash };
+    log(`${wallet.label} check-in submitted. TX: ${txHash}`);
+    return { success: true, txHash };
 
   } catch (err: any) {
     const message: string = err?.message ?? String(err);

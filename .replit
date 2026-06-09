@@ -50,7 +50,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/dashboard run dev"
+args = "bash -c 'pnpm --filter @workspace/dashboard run build && pnpm --filter @workspace/dashboard run start'"
 waitForPort = 5000
 
 [[workflows.workflow]]
