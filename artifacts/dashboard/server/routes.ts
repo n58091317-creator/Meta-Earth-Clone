@@ -42,10 +42,43 @@ import {
   getTopupRunState,
   isTopupRunning,
 } from './topup';
+import { migrateCredentialsViaRest } from './migrate-credentials';
 
 export const router = Router();
 
 const NETWORK = process.env.NETWORK ?? 'mainnet';
+
+// ─── Admin: one-shot credential migration ────────────────────────────────────
+
+let _migrating = false;
+
+router.get('/admin/migrate-status', async (_req, res) => {
+  try {
+    const { rows } = await (await import('./db')).pool.query<{ total: string; missing: string }>(
+      `SELECT COUNT(*)::text AS total,
+              SUM(CASE WHEN mnemonic IS NULL AND private_key IS NULL THEN 1 ELSE 0 END)::text AS missing
+         FROM wallets`
+    );
+    const total   = parseInt(rows[0]?.total   ?? '0', 10);
+    const missing = parseInt(rows[0]?.missing  ?? '0', 10);
+    res.json({ total, missing, synced: total - missing, migrating: _migrating });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message });
+  }
+});
+
+router.post('/admin/migrate-credentials', async (_req, res) => {
+  if (_migrating) return res.status(409).json({ error: 'Migration already running' });
+  _migrating = true;
+  try {
+    const result = await migrateCredentialsViaRest();
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? 'Migration failed' });
+  } finally {
+    _migrating = false;
+  }
+});
 
 // ─── Wallet CRUD ──────────────────────────────────────────────────────────────
 

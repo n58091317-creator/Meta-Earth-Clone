@@ -145,4 +145,11 @@ export const api = {
   getTopupStatus:  () => request<TopupRunState>('/api/topup/status'),
   getTopupHistory: (limit = 100) =>
     request<TopupLogEntry[]>(`/api/topup/history?limit=${limit}`),
+
+  getMigrationStatus: () =>
+    request<{ total: number; missing: number; synced: number; migrating: boolean }>('/api/admin/migrate-status'),
+  triggerMigration: () =>
+    request<{ total: number; synced: number; alreadyHad: number; noCredentials: number; errors: string[] }>(
+      '/api/admin/migrate-credentials', { method: 'POST' }
+    ),
 };

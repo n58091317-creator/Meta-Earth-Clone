@@ -3,6 +3,65 @@ import { api } from '../api';
 import { useApp } from '../App';
 
 const UMEC_PER_MEC = 100_000_000;
+
+type MigrationStatus = { total: number; missing: number; synced: number; migrating: boolean } | null;
+
+function MigrationBanner() {
+  const [status, setStatus]     = useState<MigrationStatus>(null);
+  const [syncing, setSyncing]   = useState(false);
+  const [result, setResult]     = useState<string | null>(null);
+
+  const fetchStatus = useCallback(async () => {
+    try { setStatus(await api.getMigrationStatus()); } catch {}
+  }, []);
+
+  useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  if (!status || status.missing === 0) return null;
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setResult(null);
+    try {
+      const r = await api.triggerMigration();
+      setResult(
+        r.errors.length > 0
+          ? `⚠ Firestore quota still exceeded — try again after midnight UTC. (${r.errors[0]})`
+          : `✓ Synced ${r.synced} wallet(s) successfully.`
+      );
+      await fetchStatus();
+    } catch (e: any) {
+      setResult('⚠ ' + (e.message ?? 'Sync failed'));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="bg-amber-500/10 border border-amber-500/40 rounded-lg px-4 py-3 text-sm">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <span className="text-amber-300 font-medium">🔄 Firebase credentials pending sync</span>
+          <span className="text-amber-400/80 ml-2">
+            {status.missing} of {status.total} wallet(s) still need their phrase/key copied to the database.
+          </span>
+        </div>
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+        >
+          {syncing ? '⏳ Syncing…' : '⟳ Sync from Firebase'}
+        </button>
+      </div>
+      {result && (
+        <p className={`mt-2 text-xs ${result.startsWith('✓') ? 'text-green-300' : 'text-amber-300'}`}>
+          {result}
+        </p>
+      )}
+    </div>
+  );
+}
 function fmtMec(umec: number): string {
   const mec = umec / UMEC_PER_MEC;
   if (umec === 0) return '0 MEC';
@@ -167,6 +226,8 @@ export function WalletsTab() {
 
   return (
     <div className="space-y-4">
+      <MigrationBanner />
+
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-sm text-red-300 flex items-center gap-2">
           <span>⚠️</span><span>{error}</span>

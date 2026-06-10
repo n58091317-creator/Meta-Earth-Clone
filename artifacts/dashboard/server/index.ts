@@ -4,6 +4,7 @@ import path from 'path';
 import * as dotenv from 'dotenv';
 import { initDb } from './db';
 import { loadEnvWallet, migrateFirestoreToPg } from './store';
+import { migrateCredentialsViaRest } from './migrate-credentials';
 import { router } from './routes';
 import { startScheduler } from './scheduler';
 import { requireAuth } from './auth';
@@ -48,8 +49,12 @@ async function start() {
   // Run heavy init in the background — errors are logged but don't crash the server.
   try {
     await initDb();
-    await migrateFirestoreToPg();
     await loadEnvWallet();
+    // Migrate credentials from Firestore → PG in background (non-blocking)
+    migrateFirestoreToPg().catch(() => {});
+    migrateCredentialsViaRest().catch(e =>
+      console.error('[server] Credential migration error:', e?.message)
+    );
     startScheduler();
   } catch (e) {
     console.error('[server] Startup error:', e);
