@@ -1,14 +1,17 @@
 ---
-name: Rollup check-in broadcast & fee
-description: How to broadcast rollup MsgCheckIn transactions without fee failures — use broadcastTxAsync + zero-fee array
+name: Rollup check-in is dead — use hub MsgNewRecord
+description: Rollup chain stalled 2026-05-01, no new blocks. Do not use rollup for check-in. See hub-checkin-msgnewrecord.md for the active method.
 ---
 
-The rollup chain (`mecheckin_101-1`) runs with `minGasPrices = "0.001umec"`. The custom `openroll/app/fee_checker.go` validates fees ONLY during `ctx.IsCheckTx()`. During `DeliverTx` (block inclusion) the function skips validation and just computes priority.
+## Rule
+Do NOT submit check-in transactions to the rollup chain (`mecheckin_101-1`, port 23011).
 
-**Rule:** Use `broadcastTxAsync` + empty fee array (`amount: []`) for all rollup transactions.
+**Why:**
+- The rollup stopped producing blocks on 2026-05-01 (last block height 18600981).
+- Mempool accepts transactions and returns a hash, but txs are never included in a block.
+- The Meta Earth explorer cannot find mempool-only tx hashes — they appear to the user as non-existent.
+- `broadcastTxAsync` was a workaround for CheckTx fee enforcement; it is no longer relevant since the rollup is dead.
 
-**Why:** `broadcastTxSync` and `broadcastTxCommit` trigger CheckTx, where the fee checker enforces either ≥10000 IBC-MEC units OR the native `umec` minGasPrice fee. Wallets typically have 0 IBC MEC on the rollup, so CheckTx always fails. `broadcastTxAsync` skips CheckTx entirely; the tx goes straight into the block pipeline where no fee check runs.
-
-**How to apply:** In `artifacts/dashboard/server/blockchain.ts` and `meta-earth-checkin/src/checkin.ts`, `ROLLUP_FEE = { amount: [], gas: '200000' }` and all broadcasts use `tmClient.broadcastTxAsync({ tx: txBytes })`. Do NOT switch to sync or commit mode.
-
-**Confirmed working:** All 3 wallets checked in successfully with async+zero-fee after this change (2026-06-07).
+**How to apply:**
+- See `hub-checkin-msgnewrecord.md` for the active check-in implementation.
+- The rollup RPC/REST endpoints can still be used for balance queries and token transfers (if the chain ever resumes), but not for check-in.

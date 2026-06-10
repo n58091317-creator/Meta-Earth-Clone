@@ -1,4 +1,4 @@
-- [Rollup check-in broadcast & fee](rollup-checkin-broadcast.md) — use broadcastTxAsync + zero fee; CheckTx enforces fees, DeliverTx does not (fee_checker.go IsCheckTx only).
-- [Rollup MsgCheckIn fields](rollup-checkin-fields.md) — correct type URL is `/mechain.checkin.MsgCheckIn` (3 fields incl. timezone); `/stchain.rollapp.checkin.MsgCheckIn` = "ShowE" (wrong type).
+- [Active daily check-in: hub MsgNewRecord](hub-checkin-msgnewrecord.md) — rollup stalled 2026-05-01; use MsgNewRecord on me-chain hub, actionNumber="MEcheckin"+YYYYMMDD, fee 10000umec gas 500000.
+- [Rollup chain dead for check-in](rollup-checkin-broadcast.md) — rollup mempool accepts txs but no blocks since 2026-05-01; explorer never shows them; do not use for check-in.
+- [Rollup MsgCheckIn fields — OBSOLETE](rollup-checkin-fields.md) — rollup type URL history; moot since rollup is dead.
 - [Replit api-server artifact routing](replit-api-server-proxy.md) — Replit auto-creates an api-server on port 8080 that intercepts /api/* browser requests; must proxy it to the real server.
-- [Hub chain MsgNewRecord check-in](hub-checkin-msgnewrecord.md) — rollup stalled 2026-05-01; active check-in is MsgNewRecord on me-chain hub; fee min 10 000 umec flat.

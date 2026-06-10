@@ -1,20 +1,12 @@
 ---
-name: Rollup MsgCheckIn fields & type URL
-description: The correct type URL and fields for the Daily Sign-in on the rollup chain (mecheckin_101-1).
+name: Rollup MsgCheckIn fields — OBSOLETE
+description: The rollup chain stalled 2026-05-01 so MsgCheckIn on the rollup is no longer the active check-in. See hub-checkin-msgnewrecord.md.
 ---
 
-## Rule
-The Daily Sign-in on the rollup chain uses `/mechain.checkin.MsgCheckIn` with **3 fields**:
-1. `checkInAddress` — wallet address
-2. `checkInMessage` — e.g. "META EARTH! ME, My Way!"
-3. `checkInTimezone` — e.g. "UTC", "UTC+8"
+## Status: OBSOLETE
+The rollup chain (`mecheckin_101-1`) stopped producing blocks on 2026-05-01. Submitting `MsgCheckIn` to the rollup mempool returns a hash but the tx is never confirmed and never appears in the explorer.
 
-Source: `repos/meta-earth/proto/mechain/checkin/tx.proto` (package `mechain.checkin`)
+The active daily check-in is now `MsgNewRecord` on the hub chain. See `hub-checkin-msgnewrecord.md`.
 
-**Why:** Using the old `/stchain.rollapp.checkin.MsgCheckIn` type URL (2 fields, no timezone) causes txs to appear as "ShowE" (unrecognised module) in the Meta Earth explorer — NOT as "Daily Sign-in". The proto for the correct module is in the meta-earth repo (not openroll or me-hub). Previous agent incorrectly documented this as a 2-field rollup-only type.
-
-**How to apply:** Both `meta-earth-checkin/src/checkin.ts` and `artifacts/dashboard/server/blockchain.ts` use:
-- `CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn'`
-- 3-field protobuf type: `checkInAddress(1), checkInMessage(2), checkInTimezone(3)`
-- `checkInTimezone` from `CHECK_IN_TIMEZONE` env var (default `"UTC"`)
-- Broadcast: `broadcastTxAsync` + zero fee (unchanged)
+## Historical note
+The correct rollup type URL was `/mechain.checkin.MsgCheckIn` (3 fields: checkInAddress, checkInMessage, checkInTimezone) from `repos/meta-earth/proto/mechain/checkin/tx.proto`. The old `/stchain.rollapp.checkin.MsgCheckIn` (2 fields) was wrong and caused "ShowE" appearance. This is now moot since the rollup is dead.

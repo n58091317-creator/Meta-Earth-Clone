@@ -5,75 +5,64 @@ import {
   OfflineSigner,
 } from '@cosmjs/proto-signing';
 import { SigningStargateClient, defaultRegistryTypes } from '@cosmjs/stargate';
-import { Tendermint37Client } from '@cosmjs/tendermint-rpc';
-import { Type, Field, Root, Writer } from 'protobufjs';
+import { Type, Field, Root } from 'protobufjs';
 import { log, logError } from './logger';
 import { WalletInfo } from './wallet';
 
 // ── Chain config ───────────────────────────────────────────────────────────────
-// Source: repos/meta-earth-js-sdk/src/config/define.ts (MAIN_NET_CONFIG / TEST_NET_CONFIG)
-const ROLLUP_RPC: Record<string, string> = {
-  mainnet: 'http://118.175.0.247:23011',
-  testnet: 'http://118.175.0.249:46657',
+// The rollup chain (mecheckin_101-1) stopped producing blocks on 2026-05-01.
+// All daily check-ins now go to the HUB chain (me-chain) via MsgNewRecord.
+const HUB_RPC: Record<string, string> = {
+  mainnet: 'http://118.175.0.247:16657',
+  testnet: 'http://118.175.0.249:26657',
 };
-const ROLLUP_CHAIN_ID: Record<string, string> = {
-  mainnet: 'mecheckin_101-1',
-  testnet: 'mecheckin_100-1',
+const HUB_CHAIN_ID: Record<string, string> = {
+  mainnet: 'me-chain',
+  testnet: 'me-chain',
 };
 const ADDRESS_PREFIX = 'me';
 
-// ── mechain.checkin.MsgCheckIn ────────────────────────────────────────────────
-// Source: repos/meta-earth/proto/mechain/checkin/tx.proto
-// Package: mechain.checkin  →  type URL: /mechain.checkin.MsgCheckIn
+// ── /metaearth.wstaking.MsgNewRecord ─────────────────────────────────────────
+// This is the ACTIVE daily check-in on the hub chain. Confirmed from live txs:
+//   actionNumber: "MEcheckin20260610"  (MEcheckin + YYYYMMDD — changes each day)
+//   actionUrl:    "https://metaearth.network"
+//   from:         wallet address
 //
-// message MsgCheckIn {
-//   string check_in_address  = 1;
-//   string check_in_message  = 2;
-//   string check_in_timezone = 3;
-// }
+// Source: repos/me-hub/x/wstaking/keeper/msg_server_record.go
+//         repos/meta-earth-js-sdk/src/me-client-ts/metaearth.wstaking/
 //
-// IMPORTANT: the old type URL /stchain.rollapp.checkin.MsgCheckIn causes
-// transactions to appear as "ShowE" (unrecognised module) in the explorer.
-// The correct URL is /mechain.checkin.MsgCheckIn — always use this one.
-const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
+// Fee: 10 000 umec, gas 500 000 (confirmed from real on-chain txs)
+// Broadcast: signAndBroadcast — hub produces blocks, tx is confirmed on-chain.
+const NEW_RECORD_TYPE_URL = '/metaearth.wstaking.MsgNewRecord';
 
-// Configurable check-in fields — Meta Earth app defaults
-const CHECK_IN_MESSAGE  = process.env.CHECK_IN_MESSAGE  ?? 'META EARTH! ME, My Way!';
-const CHECK_IN_TIMEZONE = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
+const CHECKIN_URL = process.env.CHECKIN_URL ?? 'https://metaearth.network';
 
-// Fee: zero amount, gas 200000.
-// The rollup's custom fee_checker.go (openroll/app/fee_checker.go) only enforces
-// minGasPrices during IsCheckTx. We use broadcastTxAsync which bypasses CheckTx
-// entirely, so the fee never reaches the validator — any non-nil fee struct works.
-// Empty amount array matches the official implementation and avoids IBC denom issues.
-const CHECKIN_FEE = {
-  amount: [] as { denom: string; amount: string }[],
-  gas: '200000',
+// Fee confirmed from live check-in txs on me-chain
+const HUB_FEE = {
+  amount: [{ denom: 'umec', amount: '10000' }],
+  gas: '500000',
 };
 
-// ── Protobuf type (3 fields — from mechain/checkin/tx.proto) ─────────────────
-function buildMsgCheckInType(): Type {
+// ── Protobuf type (MsgNewRecord — 3 fields) ───────────────────────────────────
+function buildMsgNewRecordType(): Type {
   const root = new Root();
-  const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress',  1, 'string'))
-    .add(new Field('checkInMessage',  2, 'string'))
-    .add(new Field('checkInTimezone', 3, 'string'));
+  const T = new Type('MsgNewRecord')
+    .add(new Field('actionNumber', 1, 'string'))
+    .add(new Field('actionUrl',    2, 'string'))
+    .add(new Field('from',         3, 'string'));
   root.add(T);
   return T;
 }
-const MsgCheckInType = buildMsgCheckInType();
+const MsgNewRecordType = buildMsgNewRecordType();
 
-// ── Raw tx encoder ─────────────────────────────────────────────────────────────
-function encodeTxRaw(txRaw: {
-  bodyBytes: Uint8Array;
-  authInfoBytes: Uint8Array;
-  signatures: Uint8Array[];
-}): Uint8Array {
-  const w = new Writer();
-  if (txRaw.bodyBytes?.length) w.uint32(10).bytes(txRaw.bodyBytes);
-  if (txRaw.authInfoBytes?.length) w.uint32(18).bytes(txRaw.authInfoBytes);
-  for (const sig of txRaw.signatures ?? []) w.uint32(26).bytes(sig);
-  return w.finish();
+// ── Action number: "MEcheckin" + YYYYMMDD ─────────────────────────────────────
+// Confirmed from live check-in txs. Each day gets a new action number.
+function getTodayActionNumber(): string {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(now.getUTCDate()).padStart(2, '0');
+  return `MEcheckin${y}${m}${d}`;
 }
 
 // ── Signer builder ────────────────────────────────────────────────────────────
@@ -94,62 +83,48 @@ export async function performCheckin(
   wallet: WalletInfo,
   network = 'mainnet',
 ): Promise<{ success: boolean; txHash?: string; error?: string; note?: string }> {
-  const rpc     = ROLLUP_RPC[network]    ?? ROLLUP_RPC.mainnet;
-  const chainId = ROLLUP_CHAIN_ID[network] ?? ROLLUP_CHAIN_ID.mainnet;
+  const rpc      = HUB_RPC[network]     ?? HUB_RPC.mainnet;
+  const chainId  = HUB_CHAIN_ID[network] ?? HUB_CHAIN_ID.mainnet;
+  const actionNumber = getTodayActionNumber();
 
   log(`Starting daily check-in for ${wallet.label} (${wallet.address})`);
-  log(`  typeUrl  : ${CHECKIN_TYPE_URL}`);
+  log(`  chain    : ${chainId} (hub — active, producing blocks)`);
+  log(`  typeUrl  : ${NEW_RECORD_TYPE_URL}`);
+  log(`  action   : ${actionNumber}`);
+  log(`  url      : ${CHECKIN_URL}`);
   log(`  rpc      : ${rpc}`);
-  log(`  chainId  : ${chainId}`);
-  log(`  message  : ${CHECK_IN_MESSAGE}`);
-  log(`  timezone : ${CHECK_IN_TIMEZONE}`);
-  log(`  fee      : zero (amount: [], gas: 200000)`);
-  log(`  broadcast: broadcastTxAsync`);
+  log(`  fee      : 10000 umec, gas 500000`);
 
   try {
     const signer = await buildSigner(wallet);
     const registry = new Registry([...defaultRegistryTypes]);
-    registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
+    registry.register(NEW_RECORD_TYPE_URL, MsgNewRecordType as any);
 
-    const tmClient = await Tendermint37Client.connect(rpc);
-    const client   = await SigningStargateClient.createWithSigner(tmClient, signer, { registry });
-
-    let accountNumber = 0;
-    let sequence      = 0;
-    try {
-      const acct = await client.getSequence(wallet.address);
-      accountNumber = acct.accountNumber;
-      sequence      = acct.sequence;
-    } catch {
-      return {
-        success: false,
-        error: 'Account not found on chain — wallet must receive tokens to activate before it can check in',
-      };
-    }
+    const client = await SigningStargateClient.connectWithSigner(rpc, signer, {
+      registry,
+      prefix: ADDRESS_PREFIX,
+    });
 
     const msg = {
-      typeUrl: CHECKIN_TYPE_URL,
-      value: MsgCheckInType.fromObject({
-        checkInAddress:  wallet.address,
-        checkInMessage:  CHECK_IN_MESSAGE,
-        checkInTimezone: CHECK_IN_TIMEZONE,
+      typeUrl: NEW_RECORD_TYPE_URL,
+      value: MsgNewRecordType.fromObject({
+        actionNumber,
+        actionUrl: CHECKIN_URL,
+        from: wallet.address,
       }),
     };
 
-    const signed   = await client.sign(wallet.address, [msg], CHECKIN_FEE, '', {
-      accountNumber,
-      sequence,
-      chainId,
-    });
-    const txBytes  = encodeTxRaw(signed);
-    const res      = await tmClient.broadcastTxAsync({ tx: txBytes });
-    const txHash   = Buffer.from(res.hash).toString('hex').toUpperCase();
+    const result = await client.signAndBroadcast(wallet.address, [msg], HUB_FEE, '');
 
-    // broadcastTxAsync = mempool acceptance is sufficient.
-    // The rollup stopped producing blocks 2026-05-01; the Meta Earth backend
-    // records check-ins from mempool — no need to poll for block inclusion.
-    log(`${wallet.label} check-in broadcast accepted. TX: ${txHash}`);
-    return { success: true, txHash };
+    if (result.code !== 0) {
+      return {
+        success: false,
+        error: `TX failed with code ${result.code}: ${result.rawLog ?? ''}`,
+      };
+    }
+
+    log(`${wallet.label} check-in confirmed on-chain. TX: ${result.transactionHash}`);
+    return { success: true, txHash: result.transactionHash };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }
