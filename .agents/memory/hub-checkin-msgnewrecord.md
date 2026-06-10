@@ -1,27 +1,16 @@
 ---
-name: Active daily check-in is MsgNewRecord on hub
-description: The rollup stalled 2026-05-01. All active daily check-ins use MsgNewRecord on the hub chain (me-chain) with actionNumber "MEcheckin"+YYYYMMDD.
+name: MsgNewRecord is Show E, NOT daily check-in
+description: /metaearth.wstaking.MsgNewRecord on the hub is the "Show E" task module. Never use it for daily check-in.
 ---
 
 ## Rule
-Daily check-in must use `/metaearth.wstaking.MsgNewRecord` on the **hub chain** (`me-chain`, RPC `http://118.175.0.247:16657`), NOT the rollup.
+`/metaearth.wstaking.MsgNewRecord` on the hub chain (`me-chain`) is the **Show E task** module. Using it for daily check-in causes the Meta Earth app to record it as "Show E", not "Daily Sign-in".
 
 **Why:**
-- The rollup chain (`mecheckin_101-1`, port 23011) stopped producing blocks on 2026-05-01. Transactions submitted there go to mempool but are never included in a block and never appear in any explorer.
-- The hub chain is live (blocks confirmed in real time, e.g. height 13344293+ on 2026-06-10).
-- Confirmed from live on-chain txs: active daily check-ins use `MsgNewRecord` on the hub with `actionNumber: "MEcheckin20260610"` (MEcheckin + YYYYMMDD).
-
-**Correct check-in fields (confirmed from live txs):**
-- typeUrl: `/metaearth.wstaking.MsgNewRecord`
-- `actionNumber`: `"MEcheckin" + YYYYMMDD` (UTC date, e.g. `"MEcheckin20260610"`)
-- `actionUrl`: `"https://metaearth.network"` (configurable via `CHECKIN_URL` env)
-- `from`: wallet address
-- fee: `10000 umec`, gas `500000`
-- broadcast: `signAndBroadcast` (hub produces blocks — tx is confirmed on-chain)
+- Confirmed by user feedback (2026-06-10): submitting MsgNewRecord with actionNumber "MEcheckin20260610" showed as "Show E" in the Meta Earth app, not as a daily check-in.
+- The wstaking module handles all task/evidence records — the Meta Earth app labels them as "Show E" regardless of actionNumber content.
+- The hub chain has no dedicated `checkin` module in `x/` — verified by listing `repos/me-hub/x/`.
 
 **How to apply:**
-- Any check-in code must connect to `http://118.175.0.247:16657` (me-chain hub).
-- Use `SigningStargateClient.connectWithSigner` (not Tendermint37Client + broadcastTxAsync).
-- actionNumber changes each day — always generate it at runtime as `"MEcheckin" + UTC YYYYMMDD`.
-- Do NOT submit check-ins to the rollup RPC (port 23011) — the chain is dead.
-- "ShowtheE..." actionNumbers are a different Meta Earth task (Show the E), NOT daily check-in.
+- Never use `MsgNewRecord` for the daily check-in. Use it only if explicitly building Show E task automation.
+- See `rollup-checkin-fields.md` for the correct daily check-in type.

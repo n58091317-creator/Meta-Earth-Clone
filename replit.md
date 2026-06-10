@@ -26,16 +26,16 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 
 ## Architecture decisions
 
-- **Daily check-in is `MsgCheckIn` in the `mechain.checkin` module** — type URL `/mechain.checkin.MsgCheckIn` on the **rollup chain** (`mecheckin_101-1`) via `broadcastTxAsync`. Source: `repos/meta-earth/proto/mechain/checkin/tx.proto`.
-- The rollup chain stopped producing blocks on 2026-05-01, but its **mempool still accepts transactions**. The Meta Earth backend records check-ins from mempool acceptance — `broadcastTxAsync` is sufficient and is exactly what the Meta Earth app does.
+- **Daily check-in is `/stchain.rollapp.checkin.MsgCheckIn`** on the **rollup chain** (`mecheckin_101-1`) via `broadcastTxAsync`. Confirmed from live rollup mempool inspection 2026-06-10 — ALL real bots in the mempool use this exact type URL with 2 fields.
+- **MsgCheckIn fields** (2 only): `checkInAddress` (1, wallet address), `checkInMessage` (2, e.g. `"META EARTH! ME, My Way!"`). NO timezone field — real mempool txs have 2 fields only.
+- The rollup chain stopped producing blocks on 2026-05-01, but its **mempool still accepts transactions**. The Meta Earth backend records check-ins from mempool acceptance — `broadcastTxAsync` is sufficient.
 - **Rollup RPC**: `http://118.175.0.247:23011` (chain ID `mecheckin_101-1`, prefix `me`, REST port `23013`).
-- **MsgCheckIn fields** (3): `checkInAddress` (1, wallet address), `checkInMessage` (2, configurable — Meta Earth app uses `"META EARTH! ME, My Way!"`), `checkInTimezone` (3, timezone string e.g. `"UTC"`, `"UTC+8"`).
 - **Rollup fee**: zero — custom `fee_checker.go` has no minimum fee requirement. Gas limit: `200 000`.
-- **Broadcast mode**: `broadcastTxAsync` — bypasses CheckTx so zero-fee txs are accepted by the mempool. The tx lands in the mempool and the Meta Earth backend sees it.
+- **Broadcast mode**: `broadcastTxAsync` — bypasses CheckTx so zero-fee txs are accepted by the mempool.
 - Bot uses `@cosmjs/stargate` + `@cosmjs/proto-signing` + `@cosmjs/tendermint-rpc` directly.
 - `protobufjs` overridden to `^7.4.0` in `pnpm-workspace.yaml` — version 6.x blocked by Replit security policy.
-- **Hub chain (me-hub)**: RPC `http://118.175.0.247:16657` (chain ID `me-chain`). Has `wstaking` module with `MsgNewRecord` — this is a **staking record entry**, NOT a daily check-in. No reward. Do not use for check-in.
-- **Hub `mechain.checkin.MsgCheckIn`**: Defined in the `meta-earth` repo but NOT compiled into the running me-hub binary at port 16657. The running hub binary is `me-hub`, not `meta-earth`.
+- **Hub chain (me-hub)**: RPC `http://118.175.0.247:16657` (chain ID `me-chain`). Has `wstaking` module with `MsgNewRecord` — this is the **Show E task** module, **NOT daily check-in**. Using `MsgNewRecord` for check-in triggers "Show E" in the Meta Earth app, not "Daily Sign-in".
+- **Hub `mechain.checkin.MsgCheckIn`**: Defined in the `meta-earth` proto repo but NOT compiled into the running me-hub binary. The hub has no `checkin` module in `x/`.
 
 ## Product
 
@@ -47,7 +47,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-- **Rollup `MsgCheckIn` type URL is `/mechain.checkin.MsgCheckIn`** with **3 fields**: `checkInAddress` (1), `checkInMessage` (2), `checkInTimezone` (3). Source: `repos/meta-earth/proto/mechain/checkin/tx.proto`. Using the old `/stchain.rollapp.checkin.MsgCheckIn` type URL (2 fields, no timezone) makes transactions appear as "ShowE" (unrecognized module) instead of "Daily Sign-in" in the Meta Earth explorer.
+- **Correct rollup check-in type URL is `/stchain.rollapp.checkin.MsgCheckIn`** with **2 fields**: `checkInAddress` (1), `checkInMessage` (2). NO timezone. Confirmed from live rollup mempool inspection 2026-06-10 — all real bots use this exact format.
+- **DO NOT use `/metaearth.wstaking.MsgNewRecord` for check-in** — that is the "Show E" task module on the hub chain. Sending `MsgNewRecord` triggers "Show E" in the Meta Earth app, not "Daily Sign-in".
+- **DO NOT use `/mechain.checkin.MsgCheckIn`** (3-field proto from meta-earth repo) — the hub has no compiled `checkin` module; the rollup is dead and this type is not processed.
 - **Use `broadcastTxAsync` for rollup txs** — `broadcastTxSync` runs CheckTx which enforces `minGasPrices = "0.001umec"`. Wallets with no IBC MEC fail CheckTx. Async skips CheckTx; DeliverTx has no fee check (confirmed from `openroll/app/fee_checker.go`).
 - **Testnet rollup REST port is `3317`** (not `46660`) — confirmed from `repos/meta-earth-js-sdk/src/config/define.ts`.
 - `meta-earth-js-sdk` is not published on npm — use local clone in `repos/meta-earth-js-sdk/` for reference, or depend on cosmjs directly.
@@ -63,9 +65,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 | `NETWORK` | `mainnet` or `testnet` |
 | `RUN_ON_START` | `true` |
 | `CRON_SCHEDULE` | `0 8 * * *` (08:00 UTC daily, optional) |
-| `CHECK_IN_TIMEZONE` | Timezone string for check-in (e.g. `UTC`, `UTC+8`, optional — defaults to `UTC`) |
-| `CHECK_IN_MESSAGE` | Custom check-in message (optional, used for rollup fallback only) |
-| `CHECKIN_URL` | URL submitted as `actionUrl` in `MsgNewRecord` (optional, defaults to `https://metaearth.network`) |
+| `CHECK_IN_MESSAGE` | Custom check-in message (optional, defaults to `META EARTH! ME, My Way!`) |
 
 ## Firebase Auth (dashboard login)
 

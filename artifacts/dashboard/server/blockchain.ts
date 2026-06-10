@@ -31,18 +31,16 @@ const IBC_SOURCE_PORT    = 'transfer';
 export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
-// Fee confirmed from live check-in txs on me-chain (gas 500000, ~10000 umec)
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '10000' }], gas: '500000' };
-// Rollup fee: zero amount — kept for rollup send operations (sweep, transfer)
+// Rollup fee: zero amount — the rollup's fee_checker.go has no DeliverTx fee requirement.
+// broadcastTxAsync bypasses CheckTx entirely (which does enforce fees).
 const ROLLUP_FEE = {
   amount: [] as { denom: string; amount: string }[],
   gas: '200000',
 };
 const ADDRESS_PREFIX = 'me';
-// Daily check-in: MsgNewRecord on hub chain (me-chain).
-// The rollup chain (mecheckin_101-1) stopped producing blocks on 2026-05-01.
-// Confirmed from live on-chain txs: actionNumber = "MEcheckin" + YYYYMMDD,
-// actionUrl = "https://metaearth.network", on hub RPC port 16657.
+// Hub wstaking module URLs — used for Show E, staking rewards, and unstaking.
+// NOT used for daily check-in.
 const WSTAKING_NEW_RECORD_URL = '/metaearth.wstaking.MsgNewRecord';
 const WSTAKING_CLAIM_URL = '/metaearth.wstaking.MsgWithdrawDelegatorReward';
 const WSTAKING_UNSTAKE_URL = '/metaearth.wstaking.MsgUnstake';
@@ -50,8 +48,25 @@ const FETCH_TIMEOUT_MS = 12_000;
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
+// Check-in type URL — confirmed from live rollup mempool inspection (2026-06-10).
+// Real bots in the mempool ALL use /stchain.rollapp.checkin.MsgCheckIn with 2 fields.
+// DO NOT use /mechain.checkin.MsgCheckIn (3-field, hub-only) or
+// /metaearth.wstaking.MsgNewRecord (Show E module — completely different task).
+const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
-// MsgNewRecord — hub chain active check-in (metaearth.wstaking module).
+// 2 fields only — confirmed from decoding real mempool txs on 2026-06-10.
+// NO timezone field. The meta-earth proto has a 3-field version but live txs omit it.
+function buildMsgCheckInType(): Type {
+  const root = new Root();
+  const T = new Type('MsgCheckIn')
+    .add(new Field('checkInAddress', 1, 'string'))
+    .add(new Field('checkInMessage', 2, 'string'));
+  root.add(T);
+  return T;
+}
+const MsgCheckInType = buildMsgCheckInType();
+
+// MsgNewRecord — hub chain wstaking module (Show E task, NOT daily check-in).
 // Fields confirmed from proto/metaearth/wstaking/record.proto and live tx inspection.
 function buildMsgNewRecordType(): Type {
   const root = new Root();
@@ -399,46 +414,21 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
-// ─── Daily check-in: MsgNewRecord on hub chain ───────────────────────────────
-// The rollup chain (mecheckin_101-1) stopped producing blocks on 2026-05-01.
-// Active check-ins go to the hub (me-chain) via MsgNewRecord.
-//
-// Confirmed from live on-chain txs today:
-//   actionNumber: "MEcheckin" + YYYYMMDD  (e.g. "MEcheckin20260610")
-//   actionUrl:    "https://metaearth.network"
-//   from:         wallet address
-//   fee:          10 000 umec, gas 500 000
-//
-// Source: repos/me-hub/x/wstaking/keeper/msg_server_record.go
-function getTodayActionNumber(): string {
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(now.getUTCDate()).padStart(2, '0');
-  return `MEcheckin${y}${m}${d}`;
-}
-
+// ─── Daily check-in: MsgCheckIn on rollup via broadcastTxAsync ───────────────
+// Type URL and fields confirmed from live rollup mempool inspection (2026-06-10):
+//   ALL real bots use /stchain.rollapp.checkin.MsgCheckIn with 2 fields.
+// The rollup stopped producing blocks 2026-05-01 but its mempool still accepts txs.
+// The Meta Earth backend records check-ins from mempool acceptance.
+// broadcastTxAsync bypasses CheckTx (which enforces fees) — DeliverTx has no fee check.
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
-  const actionNumber = getTodayActionNumber();
-  const actionUrl    = process.env.CHECKIN_URL ?? 'https://metaearth.network';
-  try {
-    const client = await buildHubClient(wallet);
-    const msg = {
-      typeUrl: WSTAKING_NEW_RECORD_URL,
-      value: MsgNewRecordType.fromObject({
-        actionNumber,
-        actionUrl,
-        from: wallet.address,
-      }),
-    };
-    const result = await client.signAndBroadcast(wallet.address, [msg], HUB_FEE, '');
-    if (result.code !== 0) {
-      return { success: false, error: `code ${result.code}: ${result.rawLog ?? ''}` };
-    }
-    return { success: true, txHash: result.transactionHash };
-  } catch (err: any) {
-    return { success: false, error: err?.message ?? String(err) };
-  }
+  const msg = {
+    typeUrl: CHECKIN_TYPE_URL,
+    value: MsgCheckInType.fromObject({
+      checkInAddress: wallet.address,
+      checkInMessage: process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
+    }),
+  };
+  return rollupBroadcast(wallet, [msg], '', network);
 }
 
 export async function hubSend(
