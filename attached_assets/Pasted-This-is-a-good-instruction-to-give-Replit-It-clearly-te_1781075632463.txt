@@ -1,0 +1,140 @@
+This is a good instruction to give Replit. It clearly tells it to stop using assumptions and instead rebuild the check-in module from the official repositories.
+
+# STOP: Remove the Current Check-In Implementation and Rebuild It Correctly
+
+The current implementation is incorrect because it is mixing the **Check-In** module with another module (likely **Show** or another transaction type). These are completely different modules and must not share logic.
+
+## Required Actions
+
+### 1. Delete the Existing Check-In Implementation
+
+Remove all existing check-in code, including:
+
+* transaction builders
+* protobuf definitions that were manually created
+* SDK wrappers
+* helper functions
+* message constructors
+* request payloads
+* API calls
+* validation logic
+
+Do **not** try to patch or modify the existing implementation. Remove it completely.
+
+---
+
+## 2. Do Not Guess the Protocol
+
+Do **not** invent:
+
+* protobuf messages
+* field names
+* transaction structures
+* endpoints
+* signing methods
+* gas calculations
+
+Every part of the implementation must come directly from the official Meta Earth repositories.
+
+---
+
+## 3. Use the Official Repositories as the Only Source of Truth
+
+Analyze these repositories thoroughly before writing any new code:
+
+* [https://github.com/openmetaearth/meta-earth](https://github.com/openmetaearth/meta-earth)
+* [https://github.com/openmetaearth/me-hub](https://github.com/openmetaearth/me-hub)
+* [https://github.com/openmetaearth/meta-earth-js-sdk](https://github.com/openmetaearth/meta-earth-js-sdk)
+* [https://github.com/openmetaearth/me-docs](https://github.com/openmetaearth/me-docs)
+* [https://github.com/openmetaearth/openroll](https://github.com/openmetaearth/openroll)
+* [https://github.com/openmetaearth/ethermint](https://github.com/openmetaearth/ethermint)
+
+Search the repositories for:
+
+* `MsgCheckIn`
+* `checkin`
+* `mechain.checkin`
+* protobuf definitions
+* message registration
+* keeper implementation
+* message server
+* CLI commands
+* SDK transaction builders
+* RPC usage
+* transaction signing
+* broadcast flow
+
+---
+
+## 4. Follow the Real Execution Flow
+
+Trace the complete implementation from the repositories:
+
+Proto Definition
+↓
+Generated Types
+↓
+SDK Transaction Builder
+↓
+Message Registration
+↓
+Signing
+↓
+Gas Simulation
+↓
+Broadcast
+↓
+Response Handling
+
+Do not skip any step.
+
+---
+
+## 5. The Check-In Module Must Be Independent
+
+The Check-In module must not reuse code from unrelated modules.
+
+Do not copy or adapt logic from any other transaction type.
+
+If another module (such as "Show") has a similar structure, that does **not** mean it shares the same protobuf messages or transaction payloads.
+
+Implement Check-In using only the official Check-In definitions.
+
+---
+
+## 6. Verify Every Field
+
+Before implementing `MsgCheckIn`, verify:
+
+* exact protobuf package
+* message name
+* field names
+* field numbers
+* required fields
+* optional fields
+* validation rules
+
+These must match the repository exactly.
+
+---
+
+## 7. SDK Usage
+
+Prefer using the official Meta Earth JavaScript SDK wherever possible.
+
+Do not manually serialize protobuf messages if the SDK already provides a supported transaction builder.
+
+---
+
+## 8. Final Verification
+
+Before marking the implementation complete:
+
+* Confirm every protobuf field matches the repository.
+* Confirm the transaction builder matches the SDK.
+* Confirm signing follows the official implementation.
+* Confirm broadcasting follows the official implementation.
+* Confirm no code from unrelated modules is reused.
+* Confirm there are no guessed structures or placeholder implementations.
+
+If any required information is missing from the repositories, stop and report exactly what is missing instead of making assumptions.

@@ -32,10 +32,8 @@ export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '12000' }], gas: '200000' };
-// Hub check-in fee: chain enforces a flat minimum of 10 000 umec (regardless of gas).
-// Real MsgNewRecord txs use ~75 000 gas out of 500 000 limit, paying ~10 000–11 000 umec.
-const HUB_CHECKIN_FEE = { amount: [{ denom: 'umec', amount: '11000' }], gas: '500000' };
-export const HUB_CHECKIN_MIN_UMEC = 11_000;
+// Check-in fee: zero — from repos/meta-earth/ts-client/mechain.checkin/module.ts (defaultFee)
+const CHECKIN_FEE = { amount: [] as { denom: string; amount: string }[], gas: '200000' };
 // Rollup fee: zero amount — the custom fee_checker.go (baseIbcFeesRequired = 10000)
 // only enforces that minimum when minGasPrices is non-zero on the node.
 // This rollup runs with minGasPrices="" so the zero-fee path in fee_checker.go
@@ -46,10 +44,8 @@ const ROLLUP_FEE = {
   gas: '200000',
 };
 const ADDRESS_PREFIX = 'me';
-const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
-// Hub chain check-in: MsgNewRecord on the metaearth.wstaking module.
-// This is the ACTIVE check-in system (9 000+ txs/day on me-chain).
-// The rollup chain (mecheckin_101-1) has been stalled since 2026-05-01.
+// Source: repos/meta-earth/ts-client/mechain.checkin/registry.ts
+const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
 const WSTAKING_NEW_RECORD_URL = '/metaearth.wstaking.MsgNewRecord';
 const WSTAKING_CLAIM_URL = '/metaearth.wstaking.MsgWithdrawDelegatorReward';
 const WSTAKING_UNSTAKE_URL = '/metaearth.wstaking.MsgUnstake';
@@ -57,11 +53,19 @@ const FETCH_TIMEOUT_MS = 12_000;
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
+// mechain.checkin.MsgCheckIn — 3 fields
+// Source: repos/meta-earth/proto/mechain/checkin/tx.proto
+// Verified: repos/meta-earth/x/checkin/types/tx.pb.go & ts-client/mechain.checkin/types/mechain/checkin/tx.ts
+//   field 1 (checkInAddress)  → tag 0x0a  (writer.uint32(10).string)
+//   field 2 (checkInMessage)  → tag 0x12  (writer.uint32(18).string)
+//   field 3 (checkInTimezone) → tag 0x1a  (writer.uint32(26).string)
+// checkInMessage MUST be "ME, My Way!" — repos/meta-earth/x/checkin/types/message_check_in.go (ValidateBasic)
 function buildMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress', 1, 'string'))
-    .add(new Field('checkInMessage', 2, 'string'));
+    .add(new Field('checkInAddress',  1, 'string'))
+    .add(new Field('checkInMessage',  2, 'string'))
+    .add(new Field('checkInTimezone', 3, 'string'));
   root.add(T);
   return T;
 }
@@ -133,9 +137,10 @@ async function buildSigner(wallet: StoredWallet): Promise<OfflineSigner> {
 async function buildHubClient(wallet: StoredWallet): Promise<SigningStargateClient> {
   const signer = await buildSigner(wallet);
   const registry = new Registry([...defaultRegistryTypes]);
+  registry.register(CHECKIN_TYPE_URL,       MsgCheckInType as any);
   registry.register(WSTAKING_NEW_RECORD_URL, MsgNewRecordType as any);
-  registry.register(WSTAKING_CLAIM_URL, MsgWstakingWithdrawType as any);
-  registry.register(WSTAKING_UNSTAKE_URL, MsgWstakingUnstakeType as any);
+  registry.register(WSTAKING_CLAIM_URL,      MsgWstakingWithdrawType as any);
+  registry.register(WSTAKING_UNSTAKE_URL,    MsgWstakingUnstakeType as any);
   return SigningStargateClient.connectWithSigner(HUB_RPC, signer, { registry });
 }
 
@@ -431,24 +436,38 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
-// ─── Daily check-in: rollup MsgCheckIn ───────────────────────────────────────
-// The daily check-in the Meta Earth app uses is /stchain.rollapp.checkin.MsgCheckIn
-// on the rollup chain (mecheckin_101-1) via broadcastTxAsync.
-// The rollup stopped producing blocks on 2026-05-01, but the mempool still accepts txs.
-// The Meta Earth backend records check-ins from mempool acceptance (broadcastTxAsync).
-// check_in_message: configurable via CHECK_IN_MESSAGE env (app uses "META EARTH! ME, My Way!")
+// ─── Daily check-in: mechain.checkin.MsgCheckIn ──────────────────────────────
+// Source (proto):     repos/meta-earth/proto/mechain/checkin/tx.proto
+// Source (module):    repos/meta-earth/ts-client/mechain.checkin/module.ts
+// Source (ValidateBasic): repos/meta-earth/x/checkin/types/message_check_in.go
 //
-// NOTE: MsgNewRecord on the hub (me-hub wstaking module) is NOT a check-in —
-// it is a staking record entry with no reward. Do not use it for daily check-in.
+// Fields:
+//   checkInAddress  — wallet address (signer)
+//   checkInMessage  — MUST be "ME, My Way!" (ValidateBasic enforces this exactly)
+//   checkInTimezone — configurable via CHECK_IN_TIMEZONE env (e.g. "Asia/Shanghai")
+//
+// Fee: { amount: [], gas: "200000" } — zero fee, from official module.ts defaultFee
+// Broadcast: signAndBroadcast — from official module.ts sendMsgCheckIn
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
-  const msg = {
-    typeUrl: CHECKIN_TYPE_URL,
-    value: {
-      checkInAddress: wallet.address,
-      checkInMessage: process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
-    },
-  };
-  return rollupBroadcast(wallet, [msg], '', network);
+  const timezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
+  try {
+    const client = await buildHubClient(wallet);
+    const msg = {
+      typeUrl: CHECKIN_TYPE_URL,
+      value: MsgCheckInType.fromObject({
+        checkInAddress:  wallet.address,
+        checkInMessage:  'ME, My Way!',
+        checkInTimezone: timezone,
+      }),
+    };
+    const result = await client.signAndBroadcast(wallet.address, [msg], CHECKIN_FEE, '');
+    if (result.code !== 0) {
+      return { success: false, error: `code ${result.code}: ${(result.rawLog ?? 'unknown error').slice(0, 300)}` };
+    }
+    return { success: true, txHash: result.transactionHash };
+  } catch (err: any) {
+    return { success: false, error: err?.message ?? String(err) };
+  }
 }
 
 export async function hubSend(
