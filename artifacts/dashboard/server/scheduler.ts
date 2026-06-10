@@ -331,28 +331,36 @@ export function startScheduler() {
   console.log(`[scheduler] Daily check-in cron: ${expr} UTC`);
   if (_nextRunAt) console.log(`[scheduler] Next scheduled run: ${_nextRunAt.toISOString()}`);
 
+  const autoDisabled = process.env.DISABLE_AUTO_CHECKIN === 'true';
+  if (autoDisabled) {
+    console.log('[scheduler] Auto check-in DISABLED (DISABLE_AUTO_CHECKIN=true) — use manual trigger');
+  }
+
   // On startup: run immediately if any wallet has not checked in today
-  setTimeout(async () => {
-    try {
-      const missed = await walletsMissingToday();
-      if (missed.length > 0) {
-        console.log(`[scheduler] Wallets missing today's check-in — running now to protect streak`);
-        await runAllCheckins('startup');
-      } else {
-        console.log('[scheduler] All wallets checked in today ✓ — next run per schedule');
+  if (!autoDisabled) {
+    setTimeout(async () => {
+      try {
+        const missed = await walletsMissingToday();
+        if (missed.length > 0) {
+          console.log(`[scheduler] Wallets missing today's check-in — running now to protect streak`);
+          await runAllCheckins('startup');
+        } else {
+          console.log('[scheduler] All wallets checked in today ✓ — next run per schedule');
+        }
+      } catch (e) {
+        console.error('[scheduler] Startup check error:', e);
       }
-    } catch (e) {
-      console.error('[scheduler] Startup check error:', e);
-    }
-  }, 3000);
+    }, 3000);
+  }
 
   // Daily cron
   cron.schedule(expr, () => {
+    if (autoDisabled) return;
     console.log('[scheduler] Cron fired');
     refreshNextRunAt();
     runAllCheckins('cron').catch(e => console.error('[scheduler] Cron error:', e));
   }, { timezone: 'UTC' });
 
   // Watchdog: every 5 min, pick up any wallets that missed check-in
-  startWatchdog();
+  if (!autoDisabled) startWatchdog();
 }
