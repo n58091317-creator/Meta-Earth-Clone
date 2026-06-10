@@ -1,0 +1,68 @@
+Here's a clearer, more direct version of your instructions for Replit.
+
+## Critical Issue: Check-In Is Executing the Wrong Module
+
+Our system has a critical bug.
+
+When we execute the **Check-In** function, it is incorrectly triggering the **Show E** module instead of the **Check-In** module.
+
+These are **two completely different modules** with different protobuf messages, transaction types, and execution logic. The current implementation appears to have reused or mixed code from the Show E module, which is incorrect.
+
+### Required Actions
+
+1. **Delete the entire current Check-In implementation.**
+
+   * Remove all code related to the current Check-In transaction.
+   * Remove any transaction builders, protobuf wrappers, helper functions, API calls, or logic that triggers the Show E module.
+   * Do **not** try to patch the existing code. Start fresh.
+
+2. **Verify the correct implementation from the official Meta Earth source code.**
+
+   * Use the GitHub organization as the primary reference:
+
+     * [https://github.com/openmetaearth](https://github.com/openmetaearth)
+   * Clone and analyze **all relevant repositories** to understand how the Meta Earth ecosystem is structured.
+   * Identify the official Check-In module, its protobuf definitions, transaction flow, SDK implementation, signing process, and broadcast process.
+
+3. **Do not reuse any code from the Show E module.**
+
+   * The Check-In module must be implemented independently using its own official protobuf definitions and transaction logic.
+   * Do not assume that similar-looking modules share the same message structure.
+
+4. **Use the repositories as the only source of truth.**
+
+   * Do not invent field names.
+   * Do not guess protobuf structures.
+   * Do not create placeholder transaction payloads.
+   * Every field, message, and transaction must match the official implementation found in the repositories.
+
+5. **Trace the complete Check-In transaction flow before writing code.**
+   Verify:
+
+   * protobuf definitions
+   * generated types
+   * message registration
+   * keeper
+   * message server
+   * SDK transaction builder
+   * signing
+   * gas estimation
+   * transaction broadcasting
+   * response handling
+
+6. **Only consider the issue resolved when the Check-In function submits a genuine Check-In transaction.**
+
+   * Running Check-In must no longer execute or reference the Show E module in any way.
+   * Search the codebase to ensure there are no remaining imports, references, or dependencies that cause Check-In to invoke Show E.
+
+### Completion Criteria
+
+Do not stop after making code changes. Continue debugging and testing until you can confirm that:
+
+* Check-In executes the correct Meta Earth module.
+* No Show E code is used during a Check-In.
+* The transaction matches the official Meta Earth implementation from the GitHub repositories.
+* The transaction is built, signed, and broadcast using the official protocol.
+* The Check-In process works end-to-end without triggering the wrong module.
+
+Do not mark this task as complete until the root cause has been identified, corrected, and verified through testing.

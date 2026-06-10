@@ -12,7 +12,6 @@ import { WalletInfo } from './wallet';
 
 // ── Chain config ───────────────────────────────────────────────────────────────
 // Source: repos/meta-earth-js-sdk/src/config/define.ts (MAIN_NET_CONFIG / TEST_NET_CONFIG)
-// netType=rollapp_checkin confirmed from successful tx explorer link
 const ROLLUP_RPC: Record<string, string> = {
   mainnet: 'http://118.175.0.247:23011',
   testnet: 'http://118.175.0.249:46657',
@@ -23,33 +22,33 @@ const ROLLUP_CHAIN_ID: Record<string, string> = {
 };
 const ADDRESS_PREFIX = 'me';
 
-// ── stchain.rollapp.checkin.MsgCheckIn ────────────────────────────────────────
-// Confirmed from live mempool decode: all real Meta Earth check-in txs use this
-// type URL with exactly 2 fields. No timezone field on the rollup chain.
+// ── mechain.checkin.MsgCheckIn ────────────────────────────────────────────────
+// Source: repos/meta-earth/proto/mechain/checkin/tx.proto
+// Package: mechain.checkin  →  type URL: /mechain.checkin.MsgCheckIn
 //
-// Fields (2):
-//   checkInAddress (1) — wallet address
-//   checkInMessage (2) — check-in message string
+// message MsgCheckIn {
+//   string check_in_address  = 1;
+//   string check_in_message  = 2;
+//   string check_in_timezone = 3;
+// }
 //
-// Fee: IBC MEC denom with amount "0", gas 500000
-//   Real txs include the IBC denom even at zero amount. Empty amount array []
-//   produces a different encoding that shows as "ShowE" instead of "Daily Sign-in".
-//   Gas limit matches real txs: 500000.
-//
-// Broadcast: broadcastTxAsync — bypasses CheckTx so txs enter mempool.
-const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
+// IMPORTANT: the old type URL /stchain.rollapp.checkin.MsgCheckIn causes
+// transactions to appear as "ShowE" (unrecognised module) in the explorer.
+// The correct URL is /mechain.checkin.MsgCheckIn — always use this one.
+const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
 
-// IBC-bridged MEC denom on the rollup (confirmed from real mempool tx)
-const ROLLUP_IBC_DENOM =
-  'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
+// Configurable check-in fields — Meta Earth app defaults
+const CHECK_IN_MESSAGE  = process.env.CHECK_IN_MESSAGE  ?? 'META EARTH! ME, My Way!';
+const CHECK_IN_TIMEZONE = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
 
-// Configurable check-in message — Meta Earth app uses "META EARTH! ME, My Way!"
-const CHECK_IN_MESSAGE = process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!';
-
-// Fee matches real check-in txs: IBC denom with amount "0", gas 500000
+// Fee: zero amount, gas 200000.
+// The rollup's custom fee_checker.go (openroll/app/fee_checker.go) only enforces
+// minGasPrices during IsCheckTx. We use broadcastTxAsync which bypasses CheckTx
+// entirely, so the fee never reaches the validator — any non-nil fee struct works.
+// Empty amount array matches the official implementation and avoids IBC denom issues.
 const CHECKIN_FEE = {
-  amount: [{ denom: ROLLUP_IBC_DENOM, amount: '0' }],
-  gas: '500000',
+  amount: [] as { denom: string; amount: string }[],
+  gas: '200000',
 };
 
 // ── Protobuf type (3 fields — from mechain/checkin/tx.proto) ─────────────────
@@ -95,12 +94,13 @@ export async function performCheckin(
   wallet: WalletInfo,
   network = 'mainnet',
 ): Promise<{ success: boolean; txHash?: string; error?: string; note?: string }> {
-  const rpc = ROLLUP_RPC[network] ?? ROLLUP_RPC.mainnet;
+  const rpc     = ROLLUP_RPC[network]    ?? ROLLUP_RPC.mainnet;
   const chainId = ROLLUP_CHAIN_ID[network] ?? ROLLUP_CHAIN_ID.mainnet;
 
   log(`Starting daily check-in for ${wallet.label} (${wallet.address})`);
-  log(`  module   : mechain.checkin.MsgCheckIn`);
+  log(`  typeUrl  : ${CHECKIN_TYPE_URL}`);
   log(`  rpc      : ${rpc}`);
+  log(`  chainId  : ${chainId}`);
   log(`  message  : ${CHECK_IN_MESSAGE}`);
   log(`  timezone : ${CHECK_IN_TIMEZONE}`);
   log(`  fee      : zero (amount: [], gas: 200000)`);
@@ -110,15 +110,16 @@ export async function performCheckin(
     const signer = await buildSigner(wallet);
     const registry = new Registry([...defaultRegistryTypes]);
     registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
+
     const tmClient = await Tendermint37Client.connect(rpc);
-    const client = await SigningStargateClient.createWithSigner(tmClient, signer, { registry });
+    const client   = await SigningStargateClient.createWithSigner(tmClient, signer, { registry });
 
     let accountNumber = 0;
-    let sequence = 0;
+    let sequence      = 0;
     try {
       const acct = await client.getSequence(wallet.address);
       accountNumber = acct.accountNumber;
-      sequence = acct.sequence;
+      sequence      = acct.sequence;
     } catch {
       return {
         success: false,
@@ -135,14 +136,14 @@ export async function performCheckin(
       }),
     };
 
-    const signed = await client.sign(wallet.address, [msg], CHECKIN_FEE, '', {
+    const signed   = await client.sign(wallet.address, [msg], CHECKIN_FEE, '', {
       accountNumber,
       sequence,
       chainId,
     });
-    const txBytes = encodeTxRaw(signed);
-    const res = await tmClient.broadcastTxAsync({ tx: txBytes });
-    const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
+    const txBytes  = encodeTxRaw(signed);
+    const res      = await tmClient.broadcastTxAsync({ tx: txBytes });
+    const txHash   = Buffer.from(res.hash).toString('hex').toUpperCase();
 
     // broadcastTxAsync = mempool acceptance is sufficient.
     // The rollup stopped producing blocks 2026-05-01; the Meta Earth backend
