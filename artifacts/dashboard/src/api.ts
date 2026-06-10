@@ -31,6 +31,22 @@ async function request<T>(url: string, init?: RequestInit & { headers?: Record<s
   return res.json() as Promise<T>;
 }
 
+async function requestBlob(url: string): Promise<{ blob: Blob; filename: string }> {
+  const token = await getIdToken();
+  const res = await fetch(url, {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error((err as any).error ?? res.statusText);
+  }
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] ?? 'export';
+  const blob = await res.blob();
+  return { blob, filename };
+}
+
 export const api = {
   // Wallets
   getWallets: () => request<Wallet[]>('/api/wallets'),
@@ -130,9 +146,8 @@ export const api = {
       body: JSON.stringify({ walletId, validatorAddress, amountUmec }),
     }),
 
-  // Export — needs token in URL params since it's a direct link
-  exportUrl: (format: 'csv' | 'json', category: 'all' | 'verified' | 'unverified') =>
-    `/api/export?format=${format}&category=${category}`,
+  exportWallets: (format: 'csv' | 'json', category: 'all' | 'verified' | 'unverified') =>
+    requestBlob(`/api/export?format=${format}&category=${category}`),
 
   // Top-Up
   getTopupConfig: () => request<TopupConfig>('/api/topup/config'),

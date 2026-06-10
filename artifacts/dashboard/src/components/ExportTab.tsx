@@ -24,14 +24,15 @@ export function ExportTab() {
     if (exportCount === 0) return;
     setDownloading(true);
     try {
-      const url = api.exportUrl(format, category);
-      // Use anchor click to trigger file download
+      const { blob, filename } = await api.exportWallets(format, category);
+      const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `wallets-${category}-${Date.now()}.${format}`;
+      a.href = objectUrl;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
     } finally {
       setTimeout(() => setDownloading(false), 1000);
     }
