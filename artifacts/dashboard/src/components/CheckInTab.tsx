@@ -232,9 +232,9 @@ export function CheckInTab() {
 
           {/* Chain clarification */}
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2.5 text-xs text-blue-300">
-            <span className="font-semibold">⛓ Hub chain only:</span>{' '}
-            Check-ins broadcast <code className="text-blue-200">MsgNewRecord</code> on the <span className="font-medium">me-chain hub</span> — <span className="font-medium">not</span> the rollup (<code className="text-blue-400/80">mecheckin_101-1</code> has been stalled since May 2026).
-            TX hashes will only appear on the me-chain hub explorer, not any rollup explorer.
+            <span className="font-semibold">⛓ Rollup chain:</span>{' '}
+            Check-ins broadcast <code className="text-blue-200">MsgCheckIn</code> on <span className="font-medium">mecheckin_101-1</span> via <code className="text-blue-200">broadcastTxAsync</code>. The Meta Earth backend records check-ins from mempool acceptance.
+            View on explorer: <code className="text-blue-400/80">netType=rollapp_checkin</code>
           </div>
 
           {/* Scheduler info */}

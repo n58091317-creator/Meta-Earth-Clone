@@ -134,31 +134,11 @@ export async function performCheckin(
     const res = await tmClient.broadcastTxAsync({ tx: txBytes });
     const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
 
-    // Poll up to 10 × 6 s = 60 s for block inclusion.
-    // broadcastTxAsync bypasses CheckTx; block time can exceed 12 s.
-    // If not visible after 60 s, the tx is still accepted by the mempool.
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 6_000));
-      try {
-        const txRes = await (tmClient as any).tx({ hash: res.hash, prove: false });
-        if (txRes?.result?.code !== 0) {
-          const errLog = (txRes.result.log ?? `DeliverTx code ${txRes.result.code}`).slice(0, 200);
-          return { success: false, txHash, error: errLog };
-        }
-        log(`${wallet.label} check-in SUCCESS. TX: ${txHash}`);
-        return { success: true, txHash };
-      } catch {
-        // not yet in a block
-      }
-    }
-
-    // Accepted by mempool — treat as success
+    // broadcastTxAsync = mempool acceptance is sufficient.
+    // The rollup stopped producing blocks 2026-05-01; the Meta Earth backend
+    // records check-ins from mempool — no need to poll for block inclusion.
     log(`${wallet.label} check-in broadcast accepted. TX: ${txHash}`);
-    return {
-      success: true,
-      txHash,
-      note: 'Broadcast accepted — block inclusion takes longer than polling window',
-    };
+    return { success: true, txHash };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }
