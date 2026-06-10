@@ -18,7 +18,7 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 ## Where things live
 
 - `meta-earth-checkin/src/index.ts` — bot entry point / cron scheduler
-- `meta-earth-checkin/src/checkin.ts` — MsgNewRecord transaction logic (the actual check-in)
+- `meta-earth-checkin/src/checkin.ts` — MsgCheckIn transaction logic (the actual check-in)
 - `meta-earth-checkin/src/wallet.ts` — wallet derivation from private key or mnemonic
 - `meta-earth-checkin/src/logger.ts` — timestamped logger
 - `meta-earth-checkin/.env.example` — env var template
@@ -39,7 +39,7 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 
 ## Product
 
-Daily check-in bot that signs and broadcasts a `MsgNewRecord` transaction on the Meta Earth hub chain on a configurable cron schedule. Supports multiple wallets via numbered `PRIVATE_KEY_1`, `PRIVATE_KEY_2`, ... or `MNEMONIC_1`, `MNEMONIC_2`, ... secrets.
+Daily check-in bot that signs and broadcasts a `MsgCheckIn` transaction on the Meta Earth rollup chain (`mecheckin_101-1`) via `broadcastTxAsync` on a configurable cron schedule. Supports multiple wallets via numbered `PRIVATE_KEY_1`, `PRIVATE_KEY_2`, ... or `MNEMONIC_1`, `MNEMONIC_2`, ... secrets.
 
 ## User preferences
 

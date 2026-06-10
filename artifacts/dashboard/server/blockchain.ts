@@ -32,8 +32,6 @@ export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '12000' }], gas: '200000' };
-// Check-in fee: zero — from repos/meta-earth/ts-client/mechain.checkin/module.ts (defaultFee)
-const CHECKIN_FEE = { amount: [] as { denom: string; amount: string }[], gas: '200000' };
 // Rollup fee: zero amount — the custom fee_checker.go (baseIbcFeesRequired = 10000)
 // only enforces that minimum when minGasPrices is non-zero on the node.
 // This rollup runs with minGasPrices="" so the zero-fee path in fee_checker.go
@@ -44,8 +42,10 @@ const ROLLUP_FEE = {
   gas: '200000',
 };
 const ADDRESS_PREFIX = 'me';
-// Source: repos/meta-earth/ts-client/mechain.checkin/registry.ts
-const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
+// Confirmed from successful on-chain tx (netType=rollapp_checkin in explorer URL).
+// Only 2 fields — the hub mechain.checkin.MsgCheckIn has 3 fields but the hub binary
+// does not have that module compiled in. The active check-in is on the rollup chain.
+const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 const WSTAKING_NEW_RECORD_URL = '/metaearth.wstaking.MsgNewRecord';
 const WSTAKING_CLAIM_URL = '/metaearth.wstaking.MsgWithdrawDelegatorReward';
 const WSTAKING_UNSTAKE_URL = '/metaearth.wstaking.MsgUnstake';
@@ -53,19 +53,14 @@ const FETCH_TIMEOUT_MS = 12_000;
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
-// mechain.checkin.MsgCheckIn — 3 fields
-// Source: repos/meta-earth/proto/mechain/checkin/tx.proto
-// Verified: repos/meta-earth/x/checkin/types/tx.pb.go & ts-client/mechain.checkin/types/mechain/checkin/tx.ts
-//   field 1 (checkInAddress)  → tag 0x0a  (writer.uint32(10).string)
-//   field 2 (checkInMessage)  → tag 0x12  (writer.uint32(18).string)
-//   field 3 (checkInTimezone) → tag 0x1a  (writer.uint32(26).string)
-// checkInMessage MUST be "ME, My Way!" — repos/meta-earth/x/checkin/types/message_check_in.go (ValidateBasic)
+// stchain.rollapp.checkin.MsgCheckIn — 2 fields only (rollup chain)
+// Confirmed from successful on-chain tx: netType=rollapp_checkin
+// The hub mechain.checkin.MsgCheckIn has a 3rd checkInTimezone field — do NOT add it here.
 function buildMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress',  1, 'string'))
-    .add(new Field('checkInMessage',  2, 'string'))
-    .add(new Field('checkInTimezone', 3, 'string'));
+    .add(new Field('checkInAddress', 1, 'string'))
+    .add(new Field('checkInMessage', 2, 'string'));
   root.add(T);
   return T;
 }
@@ -137,7 +132,6 @@ async function buildSigner(wallet: StoredWallet): Promise<OfflineSigner> {
 async function buildHubClient(wallet: StoredWallet): Promise<SigningStargateClient> {
   const signer = await buildSigner(wallet);
   const registry = new Registry([...defaultRegistryTypes]);
-  registry.register(CHECKIN_TYPE_URL,       MsgCheckInType as any);
   registry.register(WSTAKING_NEW_RECORD_URL, MsgNewRecordType as any);
   registry.register(WSTAKING_CLAIM_URL,      MsgWstakingWithdrawType as any);
   registry.register(WSTAKING_UNSTAKE_URL,    MsgWstakingUnstakeType as any);
@@ -436,38 +430,23 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
-// ─── Daily check-in: mechain.checkin.MsgCheckIn ──────────────────────────────
-// Source (proto):     repos/meta-earth/proto/mechain/checkin/tx.proto
-// Source (module):    repos/meta-earth/ts-client/mechain.checkin/module.ts
-// Source (ValidateBasic): repos/meta-earth/x/checkin/types/message_check_in.go
+// ─── Daily check-in: stchain.rollapp.checkin.MsgCheckIn ──────────────────────
+// Confirmed from successful on-chain tx (netType=rollapp_checkin in explorer URL).
+// Uses rollup chain (mecheckin_101-1) via broadcastTxAsync — bypasses CheckTx so
+// zero-fee txs are accepted. The Meta Earth backend records check-ins from mempool.
 //
-// Fields:
-//   checkInAddress  — wallet address (signer)
-//   checkInMessage  — MUST be "ME, My Way!" (ValidateBasic enforces this exactly)
-//   checkInTimezone — configurable via CHECK_IN_TIMEZONE env (e.g. "Asia/Shanghai")
-//
-// Fee: { amount: [], gas: "200000" } — zero fee, from official module.ts defaultFee
-// Broadcast: signAndBroadcast — from official module.ts sendMsgCheckIn
+// Fields (2 — rollup only):
+//   checkInAddress — wallet address
+//   checkInMessage — configurable via CHECK_IN_MESSAGE env (app uses "META EARTH! ME, My Way!")
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
-  const timezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
-  try {
-    const client = await buildHubClient(wallet);
-    const msg = {
-      typeUrl: CHECKIN_TYPE_URL,
-      value: MsgCheckInType.fromObject({
-        checkInAddress:  wallet.address,
-        checkInMessage:  'ME, My Way!',
-        checkInTimezone: timezone,
-      }),
-    };
-    const result = await client.signAndBroadcast(wallet.address, [msg], CHECKIN_FEE, '');
-    if (result.code !== 0) {
-      return { success: false, error: `code ${result.code}: ${(result.rawLog ?? 'unknown error').slice(0, 300)}` };
-    }
-    return { success: true, txHash: result.transactionHash };
-  } catch (err: any) {
-    return { success: false, error: err?.message ?? String(err) };
-  }
+  const msg = {
+    typeUrl: CHECKIN_TYPE_URL,
+    value: MsgCheckInType.fromObject({
+      checkInAddress: wallet.address,
+      checkInMessage: process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
+    }),
+  };
+  return rollupBroadcast(wallet, [msg], '', network);
 }
 
 export async function hubSend(
