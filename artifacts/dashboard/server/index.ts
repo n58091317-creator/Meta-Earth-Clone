@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import * as dotenv from 'dotenv';
 import { initDb } from './db';
-import { loadEnvWallet, migrateWalletsToFirestore, syncFirestoreWalletsToPg } from './store';
+import { loadEnvWallet, migrateFirestoreToPg } from './store';
 import { router } from './routes';
 import { startScheduler } from './scheduler';
 import { requireAuth } from './auth';
@@ -48,8 +48,7 @@ async function start() {
   // Run heavy init in the background — errors are logged but don't crash the server.
   try {
     await initDb();
-    await migrateWalletsToFirestore();
-    await syncFirestoreWalletsToPg();
+    await migrateFirestoreToPg();
     await loadEnvWallet();
     startScheduler();
   } catch (e) {

@@ -603,60 +603,163 @@ export interface SweepStepResult {
   note?: string;
 }
 
+// Default minimum withdrawable staked MEC before attempting withdrawal: 0.0002 MEC = 20,000 umec.
+// Configurable via MIN_STAKING_WITHDRAW_UMEC env var.
+const DEFAULT_MIN_WITHDRAW_UMEC = parseInt(process.env.MIN_STAKING_WITHDRAW_UMEC ?? '20000', 10);
+
+// Amount of gas to top up if a wallet is short (covers 1 hub tx fee of 10,000 umec + buffer).
+const GAS_TOP_UP_UMEC = 20_000;
+
+// Minimum hub balance required to broadcast a hub transaction (10,000 umec fee).
+const TXN_FEE_UMEC = 12_000;
+
+/**
+ * Try to withdraw staking rewards for one wallet with smart gas top-up.
+ *
+ * Flow:
+ *  1. Query withdrawable staked MEC rewards.
+ *  2. If < minWithdrawableUmec → skip (do NOT fund gas).
+ *  3. If >= minWithdrawableUmec:
+ *     a. Check hub balance for gas.
+ *     b. If sufficient → withdraw.
+ *     c. If insufficient AND masterWallet provided → master sends gas → retry.
+ */
+async function smartStakingWithdraw(
+  wallet: StoredWallet,
+  minWithdrawableUmec: number,
+  masterWallet?: StoredWallet,
+): Promise<SweepStepResult[]> {
+  const results: SweepStepResult[] = [];
+
+  // Step 1: Check withdrawable balance
+  const rewardsUmec = await getWstakingRewardsUmec(wallet.address);
+  const rewardsMec  = (rewardsUmec / 1e8).toFixed(8);
+
+  if (rewardsUmec < minWithdrawableUmec) {
+    const threshMec = (minWithdrawableUmec / 1e8).toFixed(8);
+    results.push({
+      step: 'Check Withdrawable Staked MEC',
+      success: true,
+      note: `Rewards ${rewardsMec} MEC < threshold ${threshMec} MEC — skipped (no gas funded)`,
+    });
+    return results;
+  }
+
+  results.push({
+    step: 'Check Withdrawable Staked MEC',
+    success: true,
+    note: `Rewards ${rewardsMec} MEC ≥ threshold — proceeding`,
+  });
+
+  // Step 2: Check hub gas balance
+  const hubBalance = await getHubBalance(wallet.address);
+
+  if (hubBalance >= TXN_FEE_UMEC) {
+    // Sufficient gas — withdraw directly
+    results.push({
+      step: 'Gas Check',
+      success: true,
+      note: `Hub balance ${(hubBalance / 1e6).toFixed(4)} MEC — sufficient for fees`,
+    });
+    results.push({ step: 'Withdraw Staking Rewards', ...await withdrawStakingRewards(wallet) });
+    return results;
+  }
+
+  // Insufficient gas
+  if (!masterWallet) {
+    results.push({
+      step: 'Gas Check',
+      success: false,
+      error: `Hub balance ${(hubBalance / 1e6).toFixed(4)} MEC insufficient for fees (need ≥${(TXN_FEE_UMEC / 1e6).toFixed(4)} MEC). Set a Master Wallet to auto-fund gas.`,
+    });
+    return results;
+  }
+
+  // Step 3: Master wallet funds gas
+  results.push({
+    step: 'Gas Check',
+    success: true,
+    note: `Hub balance ${(hubBalance / 1e6).toFixed(4)} MEC insufficient — Master Wallet sending ${GAS_TOP_UP_UMEC / 1e6} MEC gas`,
+  });
+
+  const gasResult = await hubSend(masterWallet, wallet.address, GAS_TOP_UP_UMEC);
+  results.push({ step: 'Fund Gas (Master Wallet)', ...gasResult });
+
+  if (!gasResult.success) {
+    results.push({
+      step: 'Withdraw Staking Rewards',
+      success: false,
+      error: 'Skipped — gas funding failed',
+    });
+    return results;
+  }
+
+  // Wait a moment for the hub to register the new balance
+  await new Promise(r => setTimeout(r, 4000));
+
+  // Step 4: Retry withdrawal
+  results.push({ step: 'Withdraw Staking Rewards', ...await withdrawStakingRewards(wallet) });
+  return results;
+}
+
 export async function autoSweep(
   wallet: StoredWallet,
   mode: SweepMode,
   destination: string,
   minHubReserveUmec: number,
-  network = 'mainnet'
+  network = 'mainnet',
+  masterWallet?: StoredWallet,
+  minWithdrawableUmec = DEFAULT_MIN_WITHDRAW_UMEC,
 ): Promise<SweepStepResult[]> {
   const results: SweepStepResult[] = [];
   const push = (step: string, r: TxResult) => results.push({ step, ...r });
-  const TXN_FEE = 12000;
 
+  // ── Staking-only: smart withdraw with threshold + conditional gas top-up ──
   if (mode === 'staking') {
-    push('Withdraw Staking Rewards', await withdrawStakingRewards(wallet));
+    const steps = await smartStakingWithdraw(wallet, minWithdrawableUmec, masterWallet);
+    results.push(...steps);
     return results;
   }
 
+  // ── Rollup-only ──────────────────────────────────────────────────────────
   if (mode === 'rollup') {
     push('Sweep Rollup Balance', await rollupSendAll(wallet, destination, network));
     return results;
   }
 
+  // ── Hub-only ─────────────────────────────────────────────────────────────
   if (mode === 'hub') {
     const hubBalance = await getHubBalance(wallet.address);
-    const available = hubBalance - minHubReserveUmec - TXN_FEE;
+    const available  = hubBalance - minHubReserveUmec - TXN_FEE_UMEC;
     if (available > 0) {
       push('Sweep Hub Balance', await hubSend(wallet, destination, available));
     } else {
       push('Sweep Hub Balance', {
         success: false,
-        error: `Hub balance ${(hubBalance / 1e6).toFixed(4)} MEC is below reserve + fee (${((minHubReserveUmec + TXN_FEE) / 1e6).toFixed(4)} MEC minimum)`,
+        error: `Hub balance ${(hubBalance / 1e6).toFixed(4)} MEC is below reserve + fee (${((minHubReserveUmec + TXN_FEE_UMEC) / 1e6).toFixed(4)} MEC minimum)`,
       });
     }
     return results;
   }
 
-  // ── All-inclusive: 3-step sequential sweep ────────────────────────────────
-  const validators = await getStakingDelegations(wallet.address);
-  if (validators.length > 0) {
-    push('Withdraw Staking Rewards', await withdrawStakingRewards(wallet));
-  } else {
-    push('Withdraw Staking Rewards', { success: true, note: 'No staking delegations on this wallet' });
-  }
+  // ── All-inclusive: staking → hub sweep → rollup sweep ────────────────────
+  // 1. Smart staking withdrawal (threshold check + conditional gas top-up)
+  const stakingSteps = await smartStakingWithdraw(wallet, minWithdrawableUmec, masterWallet);
+  results.push(...stakingSteps);
 
+  // 2. Hub sweep (after staking rewards have landed)
   const hubBalance = await getHubBalance(wallet.address);
-  const available = hubBalance - minHubReserveUmec - TXN_FEE;
+  const available  = hubBalance - minHubReserveUmec - TXN_FEE_UMEC;
   if (available > 0) {
     push('Sweep Hub Balance', await hubSend(wallet, destination, available));
   } else {
     push('Sweep Hub Balance', {
-      success: false,
-      error: `Hub balance ${(hubBalance / 1e6).toFixed(4)} MEC is below reserve + fee (${((minHubReserveUmec + TXN_FEE) / 1e6).toFixed(4)} MEC minimum)`,
+      success: true,
+      note: `Hub balance ${(hubBalance / 1e6).toFixed(4)} MEC at or below reserve + fee — skipped`,
     });
   }
 
+  // 3. Rollup sweep
   push('Sweep Rollup Balance', await rollupSendAll(wallet, destination, network));
 
   return results;

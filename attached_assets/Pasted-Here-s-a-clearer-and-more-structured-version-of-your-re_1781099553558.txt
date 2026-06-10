@@ -1,0 +1,99 @@
+Here's a clearer and more structured version of your requirements.
+
+# Auto Sweeper Improvements
+
+I would like to update the Auto Sweeper logic to make it more efficient and avoid unnecessary transactions.
+
+## 1. Minimum Withdrawable Staked MEC
+
+I have noticed that some wallets have a very small amount of withdrawable staked MEC, while others have larger balances.
+
+Implement a configurable minimum withdrawable threshold:
+
+* **Minimum withdrawable amount:** `0.0002 MEC`
+
+### Logic
+
+1. Check each wallet's **withdrawable staked MEC** balance.
+2. If the withdrawable balance is **less than 0.0002 MEC**, skip that wallet entirely.
+3. Continue processing the next wallet.
+4. Only attempt a withdrawal when the withdrawable balance is **greater than or equal to 0.0002 MEC**.
+
+This threshold should be configurable so it can be adjusted in the future without changing the source code.
+
+---
+
+# 2. Smart Gas Top-Up Logic
+
+Improve the gas funding logic performed by the Master Wallet.
+
+Currently, the Master Wallet may provide gas without first determining whether a withdrawal is actually possible.
+
+Instead, implement the following workflow.
+
+## Withdrawal Flow
+
+Before attempting any withdrawal (either **Staked MEC** or **Hub balance**):
+
+1. Query the wallet's withdrawable staked balance.
+2. Verify that the balance is **greater than or equal to the configured minimum (0.0002 MEC)**.
+3. If the balance is below the threshold:
+
+   * Do **not** send any gas.
+   * Do **not** attempt a withdrawal.
+   * Mark the wallet as skipped.
+   * Continue to the next wallet.
+
+Only if the wallet has enough withdrawable balance should the system proceed with the withdrawal process.
+
+---
+
+# 3. Conditional Gas Funding
+
+If the wallet passes the minimum balance check:
+
+1. Determine whether the wallet has enough **ME Hub** tokens to pay the transaction fee.
+2. If the wallet has sufficient gas:
+
+   * Proceed with the withdrawal normally.
+3. If the wallet does **not** have enough ME Hub tokens to cover the gas fee:
+
+   * The Master Wallet should automatically transfer only the minimum amount of gas required.
+   * Wait for the transfer to be confirmed.
+   * Retry the withdrawal.
+
+The Master Wallet should **never** fund wallets that are not eligible for withdrawal.
+
+---
+
+# 4. Required Processing Order
+
+For every wallet, follow this exact sequence:
+
+1. Check withdrawable staked MEC.
+2. Compare against the minimum threshold (`0.0002 MEC`).
+3. If below the threshold:
+
+   * Skip the wallet.
+   * Do not fund gas.
+   * Do not attempt a withdrawal.
+4. If above the threshold:
+
+   * Check the wallet's ME Hub balance for gas.
+   * If sufficient, perform the withdrawal.
+   * If insufficient, have the Master Wallet send the required gas amount.
+   * Wait for confirmation.
+   * Execute the withdrawal.
+5. Continue to the next wallet.
+
+---
+
+# Expected Outcome
+
+The updated Auto Sweeper should:
+
+* Skip wallets with insignificant withdrawable balances.
+* Avoid wasting gas on wallets that cannot perform a withdrawal.
+* Only fund wallets when a withdrawal is actually possible.
+* Automatically top up gas from the Master Wallet only when required.
+* Reduce unnecessary transactions and improve overall efficiency.

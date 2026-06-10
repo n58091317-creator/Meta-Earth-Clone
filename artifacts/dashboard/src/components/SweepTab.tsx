@@ -3,13 +3,13 @@ import { api } from '../api';
 import { useApp } from '../App';
 import type { SweepWalletResult, SweepMode } from '../types';
 
-const UMEC_PER_MEC = 100_000_000; // exponent 8 per chain denom_metadata
+const UMEC_PER_MEC = 100_000_000;
 
 const MODES: { id: SweepMode; label: string; desc: string }[] = [
-  { id: 'all', label: '🔄 All-Inclusive', desc: 'Withdraw staking rewards → sweep hub balance (minus reserve) → sweep rollup tokens.' },
-  { id: 'hub', label: '🔵 Hub Only', desc: 'Send hub MEC to destination, keeping min reserve for fees.' },
-  { id: 'rollup', label: '🟣 Rollup Only', desc: 'Send all rollup tokens to destination address (zero fee).' },
-  { id: 'staking', label: '🏆 Staking Only', desc: 'Withdraw delegation rewards from hub validators.' },
+  { id: 'all',     label: '🔄 All-Inclusive', desc: 'Smart staking withdrawal → sweep hub balance (minus reserve) → sweep rollup tokens.' },
+  { id: 'hub',     label: '🔵 Hub Only',       desc: 'Send hub MEC to destination, keeping min reserve for fees.' },
+  { id: 'rollup',  label: '🟣 Rollup Only',    desc: 'Send all rollup tokens to destination address (zero fee).' },
+  { id: 'staking', label: '🏆 Staking Only',   desc: 'Smart withdraw: checks threshold → funds gas if needed → withdraws rewards.' },
 ];
 
 function shortAddr(a: string) {
@@ -21,15 +21,20 @@ function mecToUmec(mec: string): number {
   return isNaN(v) ? 0 : Math.floor(v * UMEC_PER_MEC);
 }
 
+const needsStakingControls = (mode: SweepMode) => mode === 'staking' || mode === 'all';
+const needsDestination     = (mode: SweepMode) => mode !== 'staking';
+
 export function SweepTab() {
   const { wallets, setWallets } = useApp();
-  const [mode, setMode] = useState<SweepMode>('all');
-  const [destination, setDestination] = useState('');
-  const [minReserveMec, setMinReserveMec] = useState('0.05'); // 5,000,000 umec default (0.05 MEC)
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<SweepWalletResult[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [mode, setMode]                       = useState<SweepMode>('all');
+  const [destination, setDestination]         = useState('');
+  const [minReserveMec, setMinReserveMec]     = useState('0.05');
+  const [minWithdrawMec, setMinWithdrawMec]   = useState('0.0002');
+  const [masterWalletId, setMasterWalletId]   = useState('');
+  const [selected, setSelected]               = useState<Set<string>>(new Set());
+  const [running, setRunning]                 = useState(false);
+  const [results, setResults]                 = useState<SweepWalletResult[]>([]);
+  const [error, setError]                     = useState<string | null>(null);
 
   useEffect(() => {
     api.getWallets().then(ws => {
@@ -56,26 +61,29 @@ export function SweepTab() {
     }
   };
 
-  const needsDestination = mode !== 'staking';
-
   const runSweep = async () => {
     setError(null);
-    if (needsDestination && !destination.trim()) { setError('Enter a destination address.'); return; }
+    if (needsDestination(mode) && !destination.trim()) { setError('Enter a destination address.'); return; }
     if (selected.size === 0) { setError('Select at least one wallet.'); return; }
-    const minReserveUmec = mecToUmec(minReserveMec);
+
+    const minReserveUmec     = mecToUmec(minReserveMec);
+    const minWithdrawableUmec = mecToUmec(minWithdrawMec);
+
     const confirmMsg = mode === 'staking'
-      ? `Withdraw staking rewards for ${selected.size} wallet(s)?`
-      : `Run ${mode === 'all' ? 'all-inclusive' : mode + '-only'} sweep for ${selected.size} wallet(s)?\n\nDestination: ${shortAddr(destination)}\nMin reserve: ${minReserveMec} MEC`;
+      ? `Withdraw staking rewards for ${selected.size} wallet(s)?\n\nMin threshold: ${minWithdrawMec} MEC${masterWalletId ? '\nMaster wallet will fund gas if needed' : ''}`
+      : `Run ${mode === 'all' ? 'all-inclusive' : mode + '-only'} sweep for ${selected.size} wallet(s)?\n\nDestination: ${shortAddr(destination)}\nMin reserve: ${minReserveMec} MEC${needsStakingControls(mode) ? `\nMin staking threshold: ${minWithdrawMec} MEC` : ''}`;
     if (!confirm(confirmMsg)) return;
 
     setRunning(true);
     setResults([]);
     try {
       const r = await api.sweep({
-        ids: [...selected],
+        ids:                 [...selected],
         mode,
-        destination: destination.trim(),
-        minHubReserve: minReserveUmec,
+        destination:         destination.trim(),
+        minHubReserve:       minReserveUmec,
+        masterWalletId:      masterWalletId || undefined,
+        minWithdrawableUmec: needsStakingControls(mode) ? minWithdrawableUmec : undefined,
       });
       setResults(r);
     } catch (e: any) {
@@ -120,36 +128,34 @@ export function SweepTab() {
         </div>
 
         {/* Destination */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-            Destination Address{!needsDestination && <span className="ml-2 text-amber-400 normal-case font-normal">(not required for Staking-Only)</span>}
-          </label>
-          <div className="flex gap-2">
-            <input
-              value={destination}
-              onChange={e => setDestination(e.target.value)}
-              placeholder="me1… (master/consolidation address)"
-              className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-blue-500 placeholder:text-slate-600"
-            />
-            <select
-              onChange={e => { if (e.target.value) setDestination(wallets.find(w => w.id === e.target.value)?.address ?? ''); }}
-              className="bg-slate-900 border border-slate-600 rounded-lg px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500"
-              defaultValue=""
-            >
-              <option value="">My wallets</option>
-              {wallets.map(w => (
-                <option key={w.id} value={w.id}>{w.label}</option>
-              ))}
-            </select>
+        {needsDestination(mode) && (
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">Destination Address</label>
+            <div className="flex gap-2">
+              <input
+                value={destination}
+                onChange={e => setDestination(e.target.value)}
+                placeholder="me1… (master/consolidation address)"
+                className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-blue-500 placeholder:text-slate-600"
+              />
+              <select
+                onChange={e => { if (e.target.value) setDestination(wallets.find(w => w.id === e.target.value)?.address ?? ''); }}
+                className="bg-slate-900 border border-slate-600 rounded-lg px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500"
+                defaultValue=""
+              >
+                <option value="">My wallets</option>
+                {wallets.map(w => (
+                  <option key={w.id} value={w.id}>{w.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Min Reserve */}
+        {/* Min Hub Reserve */}
         {(mode === 'all' || mode === 'hub') && (
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-              Min Hub Reserve (MEC)
-            </label>
+            <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">Min Hub Reserve (MEC)</label>
             <input
               type="number"
               value={minReserveMec}
@@ -159,9 +165,53 @@ export function SweepTab() {
               className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-blue-500"
             />
             <p className="text-xs text-slate-500">
-              MEC kept on hub for future fees. ≈{mecToUmec(minReserveMec).toLocaleString()} umec.
-              Default 0.05 MEC covers ~4 hub transactions.
+              MEC kept on hub for future fees. ≈{mecToUmec(minReserveMec).toLocaleString()} umec. Default 0.05 MEC covers ~4 hub transactions.
             </p>
+          </div>
+        )}
+
+        {/* Staking controls — shown for staking and all-inclusive modes */}
+        {needsStakingControls(mode) && (
+          <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-4 space-y-4">
+            <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">⚡ Smart Staking Withdrawal</p>
+
+            {/* Min withdrawable threshold */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                Min Withdrawable Threshold (MEC)
+              </label>
+              <input
+                type="number"
+                value={minWithdrawMec}
+                onChange={e => setMinWithdrawMec(e.target.value)}
+                min={0}
+                step={0.0001}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-amber-500"
+              />
+              <p className="text-xs text-slate-500">
+                Wallets with rewards below this amount are skipped entirely — no gas is wasted. Default: 0.0002 MEC (≈{mecToUmec(minWithdrawMec).toLocaleString()} umec).
+              </p>
+            </div>
+
+            {/* Master wallet for gas top-up */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                Master Wallet <span className="normal-case font-normal text-slate-500">(optional — auto-funds gas for wallets that need it)</span>
+              </label>
+              <select
+                value={masterWalletId}
+                onChange={e => setMasterWalletId(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-amber-500"
+              >
+                <option value="">— None (skip wallets without gas) —</option>
+                {wallets.map(w => (
+                  <option key={w.id} value={w.id}>{w.label} ({shortAddr(w.address)})</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500">
+                If a wallet has enough rewards but no gas, this wallet automatically sends 0.0002 MEC to cover the fee before retrying.
+              </p>
+            </div>
           </div>
         )}
       </div>
@@ -197,7 +247,7 @@ export function SweepTab() {
 
       <button
         onClick={runSweep}
-        disabled={running || selected.size === 0 || (needsDestination && !destination.trim())}
+        disabled={running || selected.size === 0 || (needsDestination(mode) && !destination.trim())}
         className="w-full py-3 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors"
       >
         {running ? '⏳ Sweeping — this may take a minute…' : `🔄 Run ${MODES.find(m => m.id === mode)?.label ?? 'Sweep'} (${selected.size} wallet${selected.size !== 1 ? 's' : ''})`}
@@ -212,14 +262,20 @@ export function SweepTab() {
               <div className="px-4 py-3 bg-slate-900/50 border-b border-slate-700 flex items-center gap-2">
                 <span className="text-sm font-medium text-slate-200">{r.label}</span>
                 <span className="text-xs text-slate-500 font-mono">{shortAddr(r.address)}</span>
-                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${r.steps.some(s => s.success) ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${
+                  r.steps.some(s => s.success && !s.note?.includes('skipped'))
+                    ? 'bg-green-500/20 text-green-300'
+                    : r.steps.every(s => s.note?.includes('skipped') || s.note?.includes('threshold'))
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'bg-red-500/20 text-red-300'
+                }`}>
                   {r.steps.filter(s => s.success).length}/{r.steps.length} steps OK
                 </span>
               </div>
               <div className="divide-y divide-slate-700/30">
                 {r.steps.map((s, i) => (
                   <div key={i} className="px-4 py-2.5 flex items-start gap-2">
-                    <span className="text-sm mt-0.5 shrink-0">{s.success ? '✅' : s.note ? '⚠️' : '❌'}</span>
+                    <span className="text-sm mt-0.5 shrink-0">{s.success && !s.note ? '✅' : s.note ? '⚠️' : '❌'}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-slate-300">{s.step}</p>
                       {s.txHash && <p className="text-xs text-slate-500 font-mono mt-0.5 break-all">TX: {s.txHash}</p>}

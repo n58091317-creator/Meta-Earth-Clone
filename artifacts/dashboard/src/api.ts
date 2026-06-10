@@ -106,6 +106,8 @@ export const api = {
     mode: SweepMode;
     destination: string;
     minHubReserve: number;
+    masterWalletId?: string;
+    minWithdrawableUmec?: number;
   }) =>
     request<SweepWalletResult[]>('/api/sweep', {
       method: 'POST',

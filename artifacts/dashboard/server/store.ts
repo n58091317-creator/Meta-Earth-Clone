@@ -17,184 +17,135 @@ export interface StoredWallet {
   type: 'mnemonic' | 'privatekey';
 }
 
-// ── Firestore helpers ─────────────────────────────────────────────────────────
-
-function docToWallet(id: string, data: FirebaseFirestore.DocumentData): StoredWallet {
+function rowToWallet(row: any): StoredWallet {
   return {
-    id,
-    label:      data.label,
-    address:    data.address,
-    mnemonic:   data.mnemonic   ?? undefined,
-    privateKey: data.privateKey ?? undefined,
-    verified:   data.verified   ?? false,
-    createdAt:  data.createdAt,
-    type:       data.type as 'mnemonic' | 'privatekey',
+    id:         row.id,
+    label:      row.label,
+    address:    row.address,
+    mnemonic:   row.mnemonic   ?? undefined,
+    privateKey: row.private_key ?? undefined,
+    verified:   row.verified,
+    createdAt:  row.created_at,
+    type:       row.type as 'mnemonic' | 'privatekey',
   };
 }
 
-function walletToDoc(w: StoredWallet): Record<string, any> {
-  const doc: Record<string, any> = {
-    label:     w.label,
-    address:   w.address,
-    verified:  w.verified,
-    createdAt: w.createdAt,
-    type:      w.type,
-  };
-  if (w.mnemonic)   doc.mnemonic   = w.mnemonic;
-  if (w.privateKey) doc.privateKey = w.privateKey;
-  return doc;
-}
-
-// ── PostgreSQL sync helper (no credentials — only for FK integrity) ───────────
-
-async function pgUpsertWallet(w: StoredWallet): Promise<void> {
-  // Single valid ON CONFLICT clause — conflicts on id (primary key) do an update.
-  // If address conflicts (same address, different id), catch and ignore — already synced.
-  await pool.query(
-    `INSERT INTO wallets (id, label, address, mnemonic, private_key, verified, created_at, type)
-     VALUES ($1, $2, $3, NULL, NULL, $4, $5, $6)
-     ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label, verified = EXCLUDED.verified`,
-    [w.id, w.label, w.address, w.verified, w.createdAt, w.type]
-  ).catch(() => { /* address unique conflict — already in postgres under same address */ });
-}
-
-/**
- * Startup sync: ensures every Firestore wallet has a matching row in postgres.
- * Required for checkin_log and topup_config FK integrity.
- */
-export async function syncFirestoreWalletsToPg(): Promise<void> {
-  try {
-    const db   = getFirestoreDb();
-    const snap = await db.collection(COLLECTION).get();
-    let synced = 0;
-    for (const doc of snap.docs) {
-      const w = docToWallet(doc.id, doc.data());
-      try {
-        await pool.query(
-          `INSERT INTO wallets (id, label, address, mnemonic, private_key, verified, created_at, type)
-           VALUES ($1, $2, $3, NULL, NULL, $4, $5, $6)
-           ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label, verified = EXCLUDED.verified`,
-          [w.id, w.label, w.address, w.verified, w.createdAt, w.type]
-        );
-        synced++;
-      } catch { /* address uniqueness conflict — already present */ }
-    }
-    if (synced > 0) console.log(`[store] Synced ${synced} Firestore wallet(s) → PostgreSQL`);
-  } catch (e: any) {
-    console.error('[store] Firestore→PG sync error:', e?.message);
-  }
-}
-
-// ── CRUD ──────────────────────────────────────────────────────────────────────
+// ── Primary Store: PostgreSQL ─────────────────────────────────────────────────
 
 export async function getWallets(): Promise<StoredWallet[]> {
-  const db      = getFirestoreDb();
-  const snap    = await db.collection(COLLECTION).orderBy('createdAt', 'asc').get();
-  return snap.docs.map(d => docToWallet(d.id, d.data()));
+  const { rows } = await pool.query('SELECT * FROM wallets ORDER BY created_at ASC');
+  return rows.map(rowToWallet);
 }
 
 export async function getWallet(id: string): Promise<StoredWallet | undefined> {
-  const db  = getFirestoreDb();
-  const doc = await db.collection(COLLECTION).doc(id).get();
-  if (!doc.exists) return undefined;
-  return docToWallet(doc.id, doc.data()!);
+  const { rows } = await pool.query('SELECT * FROM wallets WHERE id = $1', [id]);
+  return rows.length ? rowToWallet(rows[0]) : undefined;
 }
 
 /**
  * Returns true if newly inserted, false if address already exists (skipped).
  */
 export async function insertWallet(w: StoredWallet): Promise<boolean> {
-  const db = getFirestoreDb();
+  const existing = await pool.query('SELECT id FROM wallets WHERE address = $1', [w.address]);
+  if (existing.rows.length > 0) return false;
 
-  // Dedup: check if address already exists in Firestore
-  const existing = await db.collection(COLLECTION)
-    .where('address', '==', w.address)
-    .limit(1)
-    .get();
-
-  if (!existing.empty) return false; // already exists
-
-  await db.collection(COLLECTION).doc(w.id).set(walletToDoc(w));
-
-  // Sync to PostgreSQL (no credentials) for FK integrity in checkin_log / topup tables
-  try { await pgUpsertWallet(w); } catch { /* non-fatal */ }
-
+  await pool.query(
+    `INSERT INTO wallets (id, label, address, mnemonic, private_key, verified, created_at, type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (id) DO NOTHING`,
+    [w.id, w.label, w.address, w.mnemonic ?? null, w.privateKey ?? null, w.verified, w.createdAt, w.type]
+  );
   return true;
 }
 
 export async function removeWallet(id: string): Promise<boolean> {
-  const db  = getFirestoreDb();
-  const doc = await db.collection(COLLECTION).doc(id).get();
-  if (!doc.exists) return false;
-
-  await db.collection(COLLECTION).doc(id).delete();
-
-  // Remove from PostgreSQL too
-  try { await pool.query('DELETE FROM wallets WHERE id = $1', [id]); } catch { /* non-fatal */ }
-
-  return true;
+  const result = await pool.query('DELETE FROM wallets WHERE id = $1 RETURNING id', [id]);
+  return result.rows.length > 0;
 }
 
 export async function updateWalletLabel(id: string, label: string): Promise<void> {
-  const db = getFirestoreDb();
-  await db.collection(COLLECTION).doc(id).update({ label });
-  try { await pool.query('UPDATE wallets SET label = $1 WHERE id = $2', [label, id]); } catch { }
+  await pool.query('UPDATE wallets SET label = $1 WHERE id = $2', [label, id]);
 }
 
 export async function markVerified(id: string): Promise<void> {
-  const db = getFirestoreDb();
-  await db.collection(COLLECTION).doc(id).update({ verified: true });
-  try { await pool.query('UPDATE wallets SET verified = TRUE WHERE id = $1', [id]); } catch { }
+  await pool.query('UPDATE wallets SET verified = TRUE WHERE id = $1', [id]);
 }
 
 export async function getWalletCount(): Promise<number> {
-  const db   = getFirestoreDb();
-  const snap = await db.collection(COLLECTION).count().get();
-  return snap.data().count;
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM wallets');
+  return rows[0].cnt ?? 0;
 }
 
-// ── One-time migration: PostgreSQL → Firestore ────────────────────────────────
+// ── One-time Firestore → PostgreSQL migration (WITH credentials) ──────────────
+//
+// Reads wallets that are missing credentials in PostgreSQL from Firestore,
+// then upserts them with credentials. Batched to stay within Firestore rate limits.
+// Safe to call on every startup — already-credentialed rows are skipped.
 
-/**
- * Runs on startup. Reads any wallets still in PostgreSQL (including credentials)
- * and writes them to Firestore. Safe to call multiple times — skips already-migrated rows.
- */
-export async function migrateWalletsToFirestore(): Promise<void> {
-  let rows: any[];
+const MIGRATION_BATCH_SIZE = 10;
+const MIGRATION_BATCH_DELAY_MS = 500;
+
+export async function migrateFirestoreToPg(): Promise<void> {
+  // Find wallets in PG that are missing credentials
+  let missingIds: string[];
   try {
-    const result = await pool.query('SELECT * FROM wallets ORDER BY created_at ASC');
-    rows = result.rows;
-  } catch {
-    return; // table may not exist yet
+    const { rows } = await pool.query(
+      `SELECT id FROM wallets WHERE mnemonic IS NULL AND private_key IS NULL ORDER BY created_at ASC`
+    );
+    missingIds = rows.map((r: any) => r.id);
+  } catch (e: any) {
+    console.error('[store] Firestore→PG: could not query missing credentials:', e?.message);
+    return;
   }
 
-  if (rows.length === 0) return;
+  if (missingIds.length === 0) {
+    console.log('[store] Firestore→PG: all wallets already have credentials in PostgreSQL ✓');
+    return;
+  }
 
+  console.log(`[store] Firestore→PG: ${missingIds.length} wallet(s) missing credentials — fetching from Firestore in batches…`);
+
+  let synced = 0;
+  let failed = 0;
   const db = getFirestoreDb();
-  let migrated = 0;
 
-  for (const row of rows) {
-    const id = row.id as string;
-    const existing = await db.collection(COLLECTION).doc(id).get();
-    if (existing.exists) continue;
+  // Process in batches to respect Firestore rate limits
+  for (let i = 0; i < missingIds.length; i += MIGRATION_BATCH_SIZE) {
+    const batch = missingIds.slice(i, i + MIGRATION_BATCH_SIZE);
 
-    const w: StoredWallet = {
-      id,
-      label:      row.label,
-      address:    row.address,
-      mnemonic:   row.mnemonic   ?? undefined,
-      privateKey: row.private_key ?? undefined,
-      verified:   row.verified,
-      createdAt:  row.created_at,
-      type:       row.type,
-    };
-    await db.collection(COLLECTION).doc(id).set(walletToDoc(w));
-    migrated++;
+    for (const id of batch) {
+      try {
+        const doc = await db.collection(COLLECTION).doc(id).get();
+        if (!doc.exists) { failed++; continue; }
+        const d = doc.data()!;
+        await pool.query(
+          `UPDATE wallets SET
+             mnemonic    = COALESCE($1, mnemonic),
+             private_key = COALESCE($2, private_key),
+             label       = $3,
+             verified    = $4
+           WHERE id = $5`,
+          [d.mnemonic ?? null, d.privateKey ?? null, d.label, d.verified ?? false, id]
+        );
+        synced++;
+      } catch (err: any) {
+        // Quota exceeded — stop and retry next startup
+        if (err?.code === 8 || err?.message?.includes('RESOURCE_EXHAUSTED') || err?.message?.includes('Quota')) {
+          console.warn(`[store] Firestore→PG: quota exceeded after ${synced} synced — will retry remaining ${missingIds.length - i - synced} on next startup`);
+          return;
+        }
+        console.warn(`[store] Firestore→PG: skipped ${id}:`, err?.message);
+        failed++;
+      }
+    }
+
+    // Pause between batches to respect rate limits
+    if (i + MIGRATION_BATCH_SIZE < missingIds.length) {
+      await new Promise(r => setTimeout(r, MIGRATION_BATCH_DELAY_MS));
+    }
   }
 
-  if (migrated > 0) {
-    console.log(`[store] Migrated ${migrated} wallet(s) from PostgreSQL → Firestore`);
-  }
+  console.log(`[store] Firestore→PG migration complete: ${synced} synced, ${failed} not found/errored`);
 }
 
 // ── Env wallet loader ─────────────────────────────────────────────────────────
@@ -207,13 +158,13 @@ export async function loadEnvWallet() {
     const hdWallet = await DirectSecp256k1HdWallet.fromMnemonic(clean, { prefix: ADDRESS_PREFIX });
     const [account] = await hdWallet.getAccounts();
     const w: StoredWallet = {
-      id: randomUUID(),
-      label: 'Primary Wallet',
-      address: account.address,
-      mnemonic: clean,
-      verified: true,
+      id:        randomUUID(),
+      label:     'Primary Wallet',
+      address:   account.address,
+      mnemonic:  clean,
+      verified:  true,
       createdAt: new Date().toISOString(),
-      type: 'mnemonic',
+      type:      'mnemonic',
     };
     const inserted = await insertWallet(w);
     if (inserted) console.log(`[store] Auto-imported primary wallet: ${account.address}`);
@@ -246,9 +197,9 @@ export async function parseBulkImport(text: string): Promise<{ imported: number;
     }
   }
 
-  let imported = 0;
-  let skipped  = 0;
-  const count  = await getWalletCount();
+  let imported  = 0;
+  let skipped   = 0;
+  const count   = await getWalletCount();
   let walletNum = count;
 
   for (let i = 0; i < mnemonics.length; i++) {
@@ -257,13 +208,13 @@ export async function parseBulkImport(text: string): Promise<{ imported: number;
       const [account] = await hdWallet.getAccounts();
       walletNum++;
       const w: StoredWallet = {
-        id: randomUUID(),
-        label: `Wallet ${walletNum}`,
-        address: account.address,
-        mnemonic: mnemonics[i],
-        verified: false,
+        id:        randomUUID(),
+        label:     `Wallet ${walletNum}`,
+        address:   account.address,
+        mnemonic:  mnemonics[i],
+        verified:  false,
         createdAt: new Date().toISOString(),
-        type: 'mnemonic',
+        type:      'mnemonic',
       };
       const ok = await insertWallet(w);
       ok ? imported++ : skipped++;
@@ -280,13 +231,13 @@ export async function parseBulkImport(text: string): Promise<{ imported: number;
       const [account] = await pkWallet.getAccounts();
       walletNum++;
       const w: StoredWallet = {
-        id: randomUUID(),
-        label: `Wallet ${walletNum}`,
-        address: account.address,
+        id:         randomUUID(),
+        label:      `Wallet ${walletNum}`,
+        address:    account.address,
         privateKey: privateKeys[i],
-        verified: false,
-        createdAt: new Date().toISOString(),
-        type: 'privatekey',
+        verified:   false,
+        createdAt:  new Date().toISOString(),
+        type:       'privatekey',
       };
       const ok = await insertWallet(w);
       ok ? imported++ : skipped++;

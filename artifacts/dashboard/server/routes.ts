@@ -215,21 +215,24 @@ router.post('/transfer', async (req, res) => {
 
 router.post('/sweep', async (req, res) => {
   try {
-    const { ids, mode, destination, minHubReserve } = req.body as {
+    const { ids, mode, destination, minHubReserve, masterWalletId, minWithdrawableUmec } = req.body as {
       ids: string[];
       mode: SweepMode;
       destination: string;
       minHubReserve: number;
+      masterWalletId?: string;
+      minWithdrawableUmec?: number;
     };
     if (!ids?.length) return res.status(400).json({ error: 'ids required' });
-    if (!destination) return res.status(400).json({ error: 'destination required' });
+    if (mode !== 'staking' && !destination) return res.status(400).json({ error: 'destination required' });
 
     const reserve = minHubReserve ?? 50000;
+    const masterWallet = masterWalletId ? (await getWallet(masterWalletId)) ?? undefined : undefined;
     const results = [];
     for (const id of ids) {
       const wallet = await getWallet(id);
       if (!wallet) { results.push({ id, steps: [{ step: 'Load Wallet', success: false, error: 'Not found' }] }); continue; }
-      const steps = await autoSweep(wallet, mode, destination, reserve, NETWORK);
+      const steps = await autoSweep(wallet, mode, destination, reserve, NETWORK, masterWallet, minWithdrawableUmec);
       if (steps.some(s => s.success)) await markVerified(id);
       results.push({ id, address: wallet.address, label: wallet.label, steps });
     }
