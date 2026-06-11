@@ -44,7 +44,18 @@ const ADDRESS_PREFIX = 'me';
 const WSTAKING_NEW_RECORD_URL = '/metaearth.wstaking.MsgNewRecord';
 const WSTAKING_CLAIM_URL = '/metaearth.wstaking.MsgWithdrawDelegatorReward';
 const WSTAKING_UNSTAKE_URL = '/metaearth.wstaking.MsgUnstake';
-const FETCH_TIMEOUT_MS = 12_000;
+const FETCH_TIMEOUT_MS   = 12_000;
+const CLIENT_TIMEOUT_MS  = 15_000;  // max wait for Tendermint WS connect + sign + broadcast
+
+/** Race a promise against a hard timeout to prevent indefinite hangs on slow RPC nodes. */
+function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promise<T> {
+  return Promise.race([
+    fn(),
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms: ${label}`)), ms)
+    ),
+  ]);
+}
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
@@ -135,7 +146,9 @@ async function buildHubClient(wallet: StoredWallet): Promise<SigningStargateClie
   registry.register(WSTAKING_NEW_RECORD_URL, MsgNewRecordType as any);
   registry.register(WSTAKING_CLAIM_URL,      MsgWstakingWithdrawType as any);
   registry.register(WSTAKING_UNSTAKE_URL,    MsgWstakingUnstakeType as any);
-  return SigningStargateClient.connectWithSigner(HUB_RPC, signer, { registry });
+  return withTimeout(CLIENT_TIMEOUT_MS, 'buildHubClient',
+    () => SigningStargateClient.connectWithSigner(HUB_RPC, signer, { registry })
+  );
 }
 
 async function buildRollupClient(wallet: StoredWallet, network = 'mainnet') {
@@ -143,8 +156,11 @@ async function buildRollupClient(wallet: StoredWallet, network = 'mainnet') {
   const rpc = ROLLUP_RPC[network] ?? ROLLUP_RPC.mainnet;
   const registry = new Registry([...defaultRegistryTypes]);
   registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
-  const tmClient = await Tendermint37Client.connect(rpc);
-  const client = await SigningStargateClient.createWithSigner(tmClient, signer, { registry });
+  const { tmClient, client } = await withTimeout(CLIENT_TIMEOUT_MS, 'buildRollupClient', async () => {
+    const tmClient = await Tendermint37Client.connect(rpc);
+    const client   = await SigningStargateClient.createWithSigner(tmClient, signer, { registry });
+    return { tmClient, client };
+  });
   return { tmClient, client };
 }
 

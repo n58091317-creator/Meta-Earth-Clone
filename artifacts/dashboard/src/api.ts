@@ -116,8 +116,8 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
-  // Sweep
-  sweep: (params: {
+  // Sweep — fire-and-forget; poll getSweepStatus for progress
+  startSweep: (params: {
     ids: string[];
     mode: SweepMode;
     destination: string;
@@ -125,10 +125,13 @@ export const api = {
     masterWalletId?: string;
     minWithdrawableUmec?: number;
   }) =>
-    request<SweepWalletResult[]>('/api/sweep', {
+    request<{ started: boolean; total: number }>('/api/sweep', {
       method: 'POST',
       body: JSON.stringify(params),
     }),
+
+  getSweepStatus: () =>
+    request<{ running: boolean; total: number; done: number; results: SweepWalletResult[]; error?: string }>('/api/sweep/status'),
 
   // Staking
   getStaking: (walletId: string) =>

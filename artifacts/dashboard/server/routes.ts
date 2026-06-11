@@ -246,33 +246,94 @@ router.post('/transfer', async (req, res) => {
 
 // ─── Auto-Sweep ───────────────────────────────────────────────────────────────
 
-router.post('/sweep', async (req, res) => {
-  try {
-    const { ids, mode, destination, minHubReserve, masterWalletId, minWithdrawableUmec } = req.body as {
-      ids: string[];
-      mode: SweepMode;
-      destination: string;
-      minHubReserve: number;
-      masterWalletId?: string;
-      minWithdrawableUmec?: number;
-    };
-    if (!ids?.length) return res.status(400).json({ error: 'ids required' });
-    if (mode !== 'staking' && !destination) return res.status(400).json({ error: 'destination required' });
+// ─── Sweep job state (in-memory, one job at a time) ──────────────────────────
+interface SweepJob {
+  running: boolean;
+  total: number;
+  done: number;
+  results: any[];
+  error?: string;
+  startedAt: number;
+}
+let _sweepJob: SweepJob | null = null;
 
-    const reserve = minHubReserve ?? 50000;
-    const masterWallet = masterWalletId ? (await getWallet(masterWalletId)) ?? undefined : undefined;
-    const results = [];
-    for (const id of ids) {
-      const wallet = await getWallet(id);
-      if (!wallet) { results.push({ id, steps: [{ step: 'Load Wallet', success: false, error: 'Not found' }] }); continue; }
-      const steps = await autoSweep(wallet, mode, destination, reserve, NETWORK, masterWallet, minWithdrawableUmec);
-      if (steps.some(s => s.success)) await markVerified(id);
-      results.push({ id, address: wallet.address, label: wallet.label, steps });
+export function getSweepJob() {
+  return _sweepJob ?? { running: false, total: 0, done: 0, results: [] };
+}
+
+async function runSweepBackground(
+  ids: string[],
+  mode: SweepMode,
+  destination: string,
+  reserve: number,
+  masterWalletId: string | undefined,
+  minWithdrawableUmec: number | undefined,
+) {
+  _sweepJob = { running: true, total: ids.length, done: 0, results: [], startedAt: Date.now() };
+  (async () => {
+    try {
+      const masterWallet = masterWalletId ? (await getWallet(masterWalletId)) ?? undefined : undefined;
+      for (const id of ids) {
+        try {
+          const wallet = await getWallet(id);
+          if (!wallet) {
+            _sweepJob!.results.push({ id, label: '?', address: '?', steps: [{ step: 'Load Wallet', success: false, error: 'Not found' }] });
+          } else {
+            const steps = await autoSweep(wallet, mode, destination, reserve, NETWORK, masterWallet, minWithdrawableUmec);
+            if (steps.some(s => s.success)) await markVerified(id).catch(() => {});
+            _sweepJob!.results.push({ id, address: wallet.address, label: wallet.label, steps });
+          }
+        } catch (e: any) {
+          _sweepJob!.results.push({ id, label: '?', address: '?', steps: [{ step: 'Sweep', success: false, error: e?.message ?? 'Unknown error' }] });
+        }
+        _sweepJob!.done++;
+      }
+    } catch (e: any) {
+      _sweepJob!.error = e?.message ?? 'Sweep failed';
+    } finally {
+      _sweepJob!.running = false;
+      const s = _sweepJob!;
+      const ok = s.results.filter(r => r.steps?.some((x: any) => x.success && !x.note)).length;
+      const skip = s.results.filter(r => r.steps?.every((x: any) => x.note)).length;
+      const err = s.total - ok - skip;
+      console.log(`[sweep] Done — ${s.done}/${s.total} | ✅${ok} ⏭${skip} ❌${err}`);
     }
-    res.json(results);
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? 'Sweep failed' });
-  }
+  })();
+  return { started: true, total: ids.length };
+}
+
+/** Trigger a staking sweep for all wallets — called from the internal admin endpoint (no Firebase). */
+export async function triggerInternalSweep(masterLabel = 'Wallet 2', minWithdrawUmec = 20_000) {
+  if (_sweepJob?.running) return { error: 'Already running', done: _sweepJob.done, total: _sweepJob.total };
+  const all = await getWallets();
+  const master = all.find(w => w.label === masterLabel);
+  const ids = all.map(w => w.id);
+  console.log(`[sweep] Internal trigger — ${ids.length} wallets, master=${master?.label ?? 'none'}`);
+  return runSweepBackground(ids, 'staking', '', 0, master?.id, minWithdrawUmec);
+}
+
+router.get('/sweep/status', (_req, res) => {
+  res.json(getSweepJob());
+});
+
+router.post('/sweep', async (req, res) => {
+  if (_sweepJob?.running) return res.status(409).json({ error: 'Sweep already running' });
+
+  const { ids, mode, destination, minHubReserve, masterWalletId, minWithdrawableUmec } = req.body as {
+    ids: string[];
+    mode: SweepMode;
+    destination: string;
+    minHubReserve: number;
+    masterWalletId?: string;
+    minWithdrawableUmec?: number;
+  };
+  if (!ids?.length) return res.status(400).json({ error: 'ids required' });
+  if (mode !== 'staking' && !destination) return res.status(400).json({ error: 'destination required' });
+
+  const result = await runSweepBackground(
+    ids, mode, destination, minHubReserve ?? 50000, masterWalletId, minWithdrawableUmec
+  );
+  res.json(result);
 });
 
 // ─── Scheduler: status / trigger / history / stats ───────────────────────────

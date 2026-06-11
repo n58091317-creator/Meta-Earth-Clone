@@ -5,7 +5,7 @@ import * as dotenv from 'dotenv';
 import { initDb } from './db';
 import { loadEnvWallet } from './store';
 import { migrateCredentialsViaRest } from './migrate-credentials';
-import { router } from './routes';
+import { router, triggerInternalSweep, getSweepJob } from './routes';
 import { startScheduler } from './scheduler';
 import { requireAuth } from './auth';
 
@@ -18,6 +18,26 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.text({ type: 'text/plain', limit: '10mb' }));
+
+// ─── Internal admin endpoints — no Firebase auth, localhost-only ─────────────
+const INTERNAL_SECRET = 'sweep-internal-2026';
+
+app.post('/internal/sweep', (req: Request, res: Response) => {
+  if (req.headers['x-admin-secret'] !== INTERNAL_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const body = req.body as { masterLabel?: string; minWithdrawUmec?: number };
+  triggerInternalSweep(body.masterLabel ?? 'Wallet 2', body.minWithdrawUmec ?? 20_000)
+    .then(r => res.json(r))
+    .catch(e => res.status(500).json({ error: e?.message }));
+});
+
+app.get('/internal/sweep/status', (req: Request, res: Response) => {
+  if (req.headers['x-admin-secret'] !== INTERNAL_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  res.json(getSweepJob());
+});
 
 // All /api routes require a valid Firebase ID token
 app.use('/api', requireAuth, router);

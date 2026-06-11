@@ -41,9 +41,17 @@ app.use((req: Request, res: Response) => {
     },
   };
 
+  // Long timeout for sweep/checkin operations that process many wallets
+  const timeoutMs = req.path.startsWith("/api/sweep") || req.path.startsWith("/api/checkin") ? 600_000 : 30_000;
+
   const proxy = http.request(options, (proxyRes) => {
     res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
     proxyRes.pipe(res, { end: true });
+  });
+
+  proxy.setTimeout(timeoutMs, () => {
+    proxy.destroy();
+    if (!res.headersSent) res.status(504).json({ error: 'Request timed out — operation may still be running in background' });
   });
 
   proxy.on("error", () => {
