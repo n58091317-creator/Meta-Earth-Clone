@@ -50,10 +50,23 @@ async function start() {
   try {
     await initDb();
     await loadEnvWallet();
-    // Migrate credentials from Firestore → PG once on startup (non-blocking)
-    migrateCredentialsViaRest().catch(e =>
-      console.error('[server] Credential migration error:', e?.message)
-    );
+    // Migrate credentials from Firestore → PG — runs now and retries every hour
+    // until all credentials are synced (self-cancels when done).
+    const runMigration = async () => {
+      try {
+        const r = await migrateCredentialsViaRest();
+        if (r.missing > 0 || (r.total === 0 && r.synced === 0)) {
+          // Still pending — retry in 1 hour
+          setTimeout(runMigration, 60 * 60 * 1000);
+        } else {
+          console.log('[server] All credentials synced — migration complete ✓');
+        }
+      } catch (e: any) {
+        console.error('[server] Credential migration error:', e?.message);
+        setTimeout(runMigration, 60 * 60 * 1000);
+      }
+    };
+    runMigration();
     startScheduler();
   } catch (e) {
     console.error('[server] Startup error:', e);
