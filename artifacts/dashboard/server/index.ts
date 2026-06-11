@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import * as dotenv from 'dotenv';
 import { initDb } from './db';
-import { loadEnvWallet, migrateFirestoreToPg } from './store';
+import { loadEnvWallet } from './store';
 import { migrateCredentialsViaRest } from './migrate-credentials';
 import { router } from './routes';
 import { startScheduler } from './scheduler';
@@ -50,8 +50,7 @@ async function start() {
   try {
     await initDb();
     await loadEnvWallet();
-    // Migrate credentials from Firestore → PG in background (non-blocking)
-    migrateFirestoreToPg().catch(() => {});
+    // Migrate credentials from Firestore → PG once on startup (non-blocking)
     migrateCredentialsViaRest().catch(e =>
       console.error('[server] Credential migration error:', e?.message)
     );
