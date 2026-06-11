@@ -55,11 +55,11 @@ async function start() {
     const runMigration = async () => {
       try {
         const r = await migrateCredentialsViaRest();
-        if (r.missing > 0 || (r.total === 0 && r.synced === 0)) {
-          // Still pending — retry in 1 hour
+        // Retry only if quota errors prevented syncing; otherwise we're done
+        if (r.errors.length > 0 && r.synced === 0) {
           setTimeout(runMigration, 60 * 60 * 1000);
         } else {
-          console.log('[server] All credentials synced — migration complete ✓');
+          console.log(`[server] Credential migration complete — ${r.synced} synced, ${r.alreadyHad} already in DB ✓`);
         }
       } catch (e: any) {
         console.error('[server] Credential migration error:', e?.message);
