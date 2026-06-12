@@ -50,7 +50,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 - **Correct rollup check-in type URL is `/stchain.rollapp.checkin.MsgCheckIn`** with **2 fields**: `checkInAddress` (1), `checkInMessage` (2). NO timezone. Confirmed from live rollup mempool inspection 2026-06-10 — all real bots use this exact format.
 - **DO NOT use `/metaearth.wstaking.MsgNewRecord` for check-in** — that is the "Show E" task module on the hub chain. Sending `MsgNewRecord` triggers "Show E" in the Meta Earth app, not "Daily Sign-in".
 - **DO NOT use `/mechain.checkin.MsgCheckIn`** (3-field proto from meta-earth repo) — the hub has no compiled `checkin` module; the rollup is dead and this type is not processed.
-- **Use `broadcastTxAsync` for rollup txs** — `broadcastTxSync` runs CheckTx which enforces `minGasPrices = "0.001umec"`. Wallets with no IBC MEC fail CheckTx. Async skips CheckTx; DeliverTx has no fee check (confirmed from `openroll/app/fee_checker.go`).
+- **Use `broadcastTxSync` for rollup txs** — the node's min gas price is 0, so fee=0 txs pass CheckTx fine. Sync gives us the real CheckTx result (error code + log) instead of silently dropping the tx.
+- **Sequence mismatch (code 32)** — the mempool is permanently full at 5000 txs (no blocks since 2026-05-01). A wallet's first check-in tx (sequence 0) stays in the mempool forever. Subsequent check-ins get "expected 1, got 0". The code parses the expected sequence from the error and retries automatically. This is handled in both `checkin.ts` and `blockchain.ts`.
+- **Fee structure** — use `ibc/BC7F4D581D...CBC5` denom with amount `"0"` and gas `500000` (matches real bots in mempool). Empty fee arrays also work but may be deprioritized.
 - **Testnet rollup REST port is `3317`** (not `46660`) — confirmed from `repos/meta-earth-js-sdk/src/config/define.ts`.
 - `meta-earth-js-sdk` is not published on npm — use local clone in `repos/meta-earth-js-sdk/` for reference, or depend on cosmjs directly.
 - `protobufjs@6.x` is blocked by Replit security policy; override to `^7.4.0` is set in `pnpm-workspace.yaml`.
@@ -67,14 +69,12 @@ _Populate as you build — explicit user instructions worth remembering across s
 | `CRON_SCHEDULE` | `0 8 * * *` (08:00 UTC daily, optional) |
 | `CHECK_IN_MESSAGE` | Custom check-in message (optional, defaults to `META EARTH! ME, My Way!`) |
 
-## Firebase Auth (dashboard login)
+## Dashboard login (Replit Auth)
 
-The dashboard is protected by Firebase Authentication. Config is stored as `VITE_FIREBASE_*` env vars.
+The dashboard is protected by **Replit OIDC**. Login redirects through `/api/login` → `/api/callback`. Sessions are stored in PostgreSQL (`sessions` table). No email/password form — Replit handles authentication.
 
-- **To add users**: Firebase Console → Authentication → Users → Add User (email + password)
-- **Project**: `meta-earth-dashboard`
-- The wallet private keys/mnemonics stay in PostgreSQL — they are **never sent to Firebase/Firestore**
-- Every API request carries a Firebase ID token; the backend (`server/auth.ts`) verifies it with `firebase-admin`
+- Wallet private keys/mnemonics stay in PostgreSQL — never sent externally
+- Session secret stored as `SESSION_SECRET` Replit secret
 
 ## Pointers
 

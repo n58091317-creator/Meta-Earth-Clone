@@ -32,11 +32,14 @@ export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '10000' }], gas: '500000' };
-// Rollup fee: zero amount — the rollup's fee_checker.go has no DeliverTx fee requirement.
-// broadcastTxAsync bypasses CheckTx entirely (which does enforce fees).
+// Rollup fee: IBC MEC denom with amount "0" — matches what real check-in bots use in the mempool.
+// Even though the rollup's fee_checker.go requires no minimum fee, specifying the IBC denom
+// with amount "0" gives the tx the same priority as other bots, preventing mempool eviction
+// when the mempool is full (5000 tx cap). Empty fee arrays get dropped when mempool is full.
+// Gas 500000 matches real bots (confirmed from live mempool inspection).
 const ROLLUP_FEE = {
-  amount: [] as { denom: string; amount: string }[],
-  gas: '200000',
+  amount: [{ denom: 'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5', amount: '0' }],
+  gas: '500000',
 };
 const ADDRESS_PREFIX = 'me';
 // Hub wstaking module URLs — used for Show E, staking rewards, and unstaking.
@@ -206,6 +209,39 @@ async function pollTxResult(
   return null;
 }
 
+/** Parse "expected N, got M" from a code-32 sequence mismatch log string. Returns N or null. */
+function parseExpectedSequence(log: string): number | null {
+  const m = log.match(/expected\s+(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** Sign and broadcast a tx to the rollup. Returns the CheckTx result. */
+async function signAndBroadcast(
+  tmClient: Tendermint37Client,
+  client: SigningStargateClient,
+  wallet: StoredWallet,
+  msgs: any[],
+  memo: string,
+  chainId: string,
+  accountNumber: number,
+  sequence: number,
+): Promise<{ code: number; log: string; hash: string }> {
+  const signed = await client.sign(wallet.address, msgs, ROLLUP_FEE, memo, {
+    accountNumber,
+    sequence,
+    chainId,
+  });
+  const txBytes = encodeTxRaw(signed);
+  // broadcastTxSync: runs CheckTx synchronously so we see the real error code.
+  // The fee_checker.go has no minGasPrices set, so fee=0 txs pass CheckTx fine.
+  const res = await (tmClient as any).broadcastTxSync({ tx: txBytes });
+  return {
+    code: res.code ?? 0,
+    log: res.log ?? '',
+    hash: Buffer.from(res.hash).toString('hex').toUpperCase(),
+  };
+}
+
 async function rollupBroadcast(
   wallet: StoredWallet,
   msgs: any[],
@@ -223,8 +259,6 @@ async function rollupBroadcast(
       accountNumber = acct.accountNumber;
       sequence = acct.sequence;
     } catch {
-      // Account does not exist on-chain (never received tokens / never transacted).
-      // Broadcasting would produce a silent DeliverTx failure, so fail fast.
       return {
         success: false,
         error: 'Account not found on chain — wallet must receive tokens to activate before it can check in',
@@ -232,22 +266,26 @@ async function rollupBroadcast(
       };
     }
 
-    // Use broadcastTxAsync to bypass CheckTx — the rollup's custom fee_checker.go
-    // only validates fees during IsCheckTx(). In DeliverTx (block inclusion),
-    // zero-fee txs are accepted. broadcastTxAsync skips the CheckTx mempool pass.
-    const signed = await client.sign(wallet.address, msgs, ROLLUP_FEE, memo, {
-      accountNumber,
-      sequence,
-      chainId,
-    });
-    const txBytes = encodeTxRaw(signed);
-    const res = await tmClient.broadcastTxAsync({ tx: txBytes });
-    const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
+    // Attempt 1: broadcast with on-chain sequence
+    let result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, sequence);
 
-    // broadcastTxAsync = mempool acceptance is sufficient.
-    // The rollup stopped producing blocks 2026-05-01; the Meta Earth backend
-    // records check-ins from mempool — no need to poll for block inclusion.
-    return { success: true, txHash };
+    // Code 32 = sequence mismatch — the mempool already has a pending tx for this
+    // wallet at this sequence (from a previous check-in that hasn't been delivered
+    // because the rollup stopped producing blocks). Parse the expected sequence from
+    // the error log and retry once with the correct value.
+    if (result.code === 32) {
+      const expectedSeq = parseExpectedSequence(result.log);
+      if (expectedSeq !== null && expectedSeq !== sequence) {
+        console.log(`[blockchain] Sequence mismatch for ${wallet.label}: expected ${expectedSeq}, retrying...`);
+        result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, expectedSeq);
+      }
+    }
+
+    if (result.code !== 0) {
+      return { success: false, error: `CheckTx code ${result.code}: ${result.log}` };
+    }
+
+    return { success: true, txHash: result.hash };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }

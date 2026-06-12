@@ -42,11 +42,14 @@ function buildMsgCheckInType(): Type {
 }
 const MsgCheckInType = buildMsgCheckInType();
 
-// Rollup fee: zero — fee_checker.go has no DeliverTx fee requirement.
-// broadcastTxAsync bypasses CheckTx (which does enforce fees).
+// Rollup fee: IBC MEC denom with amount "0" — matches what real check-in bots use in the mempool.
+// Even though the rollup's fee_checker.go requires no minimum fee, specifying the IBC denom
+// with amount "0" gives the tx the same priority as other bots, preventing mempool eviction
+// when the mempool is full (5000 tx cap). Gas 500000 matches real bots (live mempool confirmed).
+const ROLLUP_IBC_DENOM = 'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 const ROLLUP_FEE = {
-  amount: [] as { denom: string; amount: string }[],
-  gas: '200000',
+  amount: [{ denom: ROLLUP_IBC_DENOM, amount: '0' }],
+  gas: '500000',
 };
 
 // ── Minimal TxRaw encoder (avoids full protobuf dependency) ───────────────────
@@ -76,6 +79,12 @@ async function buildSigner(wallet: WalletInfo): Promise<OfflineSigner> {
 
 // ── Check-in ──────────────────────────────────────────────────────────────────
 
+/** Parse "expected N, got M" from a code-32 sequence mismatch log. Returns N or null. */
+function parseExpectedSequence(logMsg: string): number | null {
+  const m = logMsg.match(/expected\s+(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 export async function performCheckin(
   wallet: WalletInfo,
   network = 'mainnet',
@@ -85,11 +94,11 @@ export async function performCheckin(
   const message = process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!';
 
   log(`Starting daily check-in for ${wallet.label} (${wallet.address})`);
-  log(`  chain    : ${chainId} (rollup — mempool accepted by Meta Earth backend)`);
-  log(`  typeUrl  : ${CHECKIN_TYPE_URL}`);
-  log(`  message  : ${message}`);
-  log(`  rpc      : ${rpc}`);
-  log(`  fee      : zero, gas 200000, broadcastTxAsync`);
+  log(`  chain   : ${chainId}`);
+  log(`  typeUrl : ${CHECKIN_TYPE_URL}`);
+  log(`  message : ${message}`);
+  log(`  rpc     : ${rpc}`);
+  log(`  fee     : ibc/BC7F4D... amount=0, gas=500000, broadcastTxSync`);
 
   try {
     const signer = await buildSigner(wallet);
@@ -111,7 +120,7 @@ export async function performCheckin(
     } catch {
       return {
         success: false,
-        error: 'Account not found on rollup — wallet must have transacted on-chain before it can check in',
+        error: 'Account not found on rollup — wallet must have received tokens first',
       };
     }
 
@@ -123,17 +132,43 @@ export async function performCheckin(
       }),
     };
 
-    const signed = await client.sign(wallet.address, [msg], ROLLUP_FEE, '', {
-      accountNumber,
-      sequence,
-      chainId,
-    });
-    const txBytes = encodeTxRaw(signed);
-    const res = await tmClient.broadcastTxAsync({ tx: txBytes });
-    const txHash = Buffer.from(res.hash).toString('hex').toUpperCase();
+    async function tryBroadcast(seq: number): Promise<{ code: number; logMsg: string; hash: string }> {
+      const signed = await client.sign(wallet.address, [msg], ROLLUP_FEE, '', {
+        accountNumber,
+        sequence: seq,
+        chainId,
+      });
+      const txBytes = encodeTxRaw(signed);
+      // Use broadcastTxSync so we get real CheckTx results (errors, sequence mismatches).
+      // The rollup fee_checker.go has no min gas price, so fee=0 txs pass CheckTx fine.
+      const res = await (tmClient as any).broadcastTxSync({ tx: txBytes });
+      return {
+        code: res.code ?? 0,
+        logMsg: res.log ?? '',
+        hash: Buffer.from(res.hash).toString('hex').toUpperCase(),
+      };
+    }
 
-    log(`${wallet.label} check-in accepted by rollup mempool. TX: ${txHash}`);
-    return { success: true, txHash };
+    // Attempt 1 with on-chain sequence
+    let result = await tryBroadcast(sequence);
+
+    // Code 32 = sequence mismatch: mempool already has a pending tx at this sequence
+    // (from a previous check-in that was never delivered because the rollup stopped
+    // producing blocks). Parse the expected sequence from the error and retry once.
+    if (result.code === 32) {
+      const expected = parseExpectedSequence(result.logMsg);
+      if (expected !== null && expected !== sequence) {
+        log(`${wallet.label} sequence mismatch — on-chain: ${sequence}, mempool expects: ${expected}. Retrying...`);
+        result = await tryBroadcast(expected);
+      }
+    }
+
+    if (result.code !== 0) {
+      return { success: false, error: `CheckTx code ${result.code}: ${result.logMsg}` };
+    }
+
+    log(`${wallet.label} check-in accepted by rollup mempool. TX: ${result.hash}`);
+    return { success: true, txHash: result.hash };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }
