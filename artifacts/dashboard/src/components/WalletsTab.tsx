@@ -41,9 +41,9 @@ function MigrationBanner() {
     <div className="bg-amber-500/10 border border-amber-500/40 rounded-lg px-4 py-3 text-sm">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <span className="text-amber-300 font-medium">🔄 Firebase credentials pending sync</span>
+          <span className="text-amber-300 font-medium">⚠ Credentials pending</span>
           <span className="text-amber-400/80 ml-2">
-            {status.missing} of {status.total} wallet(s) still need their phrase/key copied to the database.
+            {status.missing} of {status.total} wallet(s) still need their phrase/key stored in the database.
           </span>
         </div>
         <button
@@ -51,7 +51,7 @@ function MigrationBanner() {
           disabled={syncing}
           className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
         >
-          {syncing ? '⏳ Syncing…' : '⟳ Sync from Firebase'}
+          {syncing ? '⏳ Checking…' : '⟳ Check Status'}
         </button>
       </div>
       {result && (

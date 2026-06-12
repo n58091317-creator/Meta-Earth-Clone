@@ -1,10 +1,8 @@
 import { randomUUID } from 'crypto';
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet } from '@cosmjs/proto-signing';
 import { pool } from './db';
-import { getFirestoreDb } from './auth';
 
 const ADDRESS_PREFIX = 'me';
-const COLLECTION = 'wallets';
 
 export interface StoredWallet {
   id: string;
@@ -76,77 +74,6 @@ export async function getWalletCount(): Promise<number> {
   return rows[0].cnt ?? 0;
 }
 
-// ── One-time Firestore → PostgreSQL migration (WITH credentials) ──────────────
-//
-// Reads wallets that are missing credentials in PostgreSQL from Firestore,
-// then upserts them with credentials. Batched to stay within Firestore rate limits.
-// Safe to call on every startup — already-credentialed rows are skipped.
-
-const MIGRATION_BATCH_SIZE = 10;
-const MIGRATION_BATCH_DELAY_MS = 500;
-
-export async function migrateFirestoreToPg(): Promise<void> {
-  // Find wallets in PG that are missing credentials
-  let missingIds: string[];
-  try {
-    const { rows } = await pool.query(
-      `SELECT id FROM wallets WHERE mnemonic IS NULL AND private_key IS NULL ORDER BY created_at ASC`
-    );
-    missingIds = rows.map((r: any) => r.id);
-  } catch (e: any) {
-    console.error('[store] Firestore→PG: could not query missing credentials:', e?.message);
-    return;
-  }
-
-  if (missingIds.length === 0) {
-    console.log('[store] Firestore→PG: all wallets already have credentials in PostgreSQL ✓');
-    return;
-  }
-
-  console.log(`[store] Firestore→PG: ${missingIds.length} wallet(s) missing credentials — fetching from Firestore in batches…`);
-
-  let synced = 0;
-  let failed = 0;
-  const db = getFirestoreDb();
-
-  // Process in batches to respect Firestore rate limits
-  for (let i = 0; i < missingIds.length; i += MIGRATION_BATCH_SIZE) {
-    const batch = missingIds.slice(i, i + MIGRATION_BATCH_SIZE);
-
-    for (const id of batch) {
-      try {
-        const doc = await db.collection(COLLECTION).doc(id).get();
-        if (!doc.exists) { failed++; continue; }
-        const d = doc.data()!;
-        await pool.query(
-          `UPDATE wallets SET
-             mnemonic    = COALESCE($1, mnemonic),
-             private_key = COALESCE($2, private_key),
-             label       = $3,
-             verified    = $4
-           WHERE id = $5`,
-          [d.mnemonic ?? null, d.privateKey ?? null, d.label, d.verified ?? false, id]
-        );
-        synced++;
-      } catch (err: any) {
-        // Quota exceeded — stop and retry next startup
-        if (err?.code === 8 || err?.message?.includes('RESOURCE_EXHAUSTED') || err?.message?.includes('Quota')) {
-          console.warn(`[store] Firestore→PG: quota exceeded after ${synced} synced — will retry remaining ${missingIds.length - i - synced} on next startup`);
-          return;
-        }
-        console.warn(`[store] Firestore→PG: skipped ${id}:`, err?.message);
-        failed++;
-      }
-    }
-
-    // Pause between batches to respect rate limits
-    if (i + MIGRATION_BATCH_SIZE < missingIds.length) {
-      await new Promise(r => setTimeout(r, MIGRATION_BATCH_DELAY_MS));
-    }
-  }
-
-  console.log(`[store] Firestore→PG migration complete: ${synced} synced, ${failed} not found/errored`);
-}
 
 // ── Env wallet loader ─────────────────────────────────────────────────────────
 

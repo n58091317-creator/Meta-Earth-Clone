@@ -72,5 +72,29 @@ export async function initDb() {
   // Migration — add tx_type column to topup_log for hub vs ibc entries
   await pool.query(`ALTER TABLE topup_log ADD COLUMN IF NOT EXISTS tx_type TEXT NOT NULL DEFAULT 'hub'`);
 
-  console.log('[db] Tables ready (wallets + checkin_log + topup_config + topup_log)');
+  // Replit Auth tables
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      sid    VARCHAR NOT NULL COLLATE "default" PRIMARY KEY,
+      sess   JSON NOT NULL,
+      expire TIMESTAMP(6) NOT NULL
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS IDX_session_expire ON sessions (expire)
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS auth_users (
+      id                TEXT PRIMARY KEY,
+      email             TEXT UNIQUE,
+      first_name        TEXT,
+      last_name         TEXT,
+      profile_image_url TEXT,
+      created_at        TIMESTAMPTZ DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  console.log('[db] Tables ready (wallets + checkin_log + topup_config + topup_log + sessions + auth_users)');
 }

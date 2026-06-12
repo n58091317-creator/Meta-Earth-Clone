@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "go-1.21", "postgresql-16"]
+modules = ["nodejs-20", "go-1.21"]
 
 [deployment]
 router = "application"
@@ -68,6 +68,7 @@ outputType = "console"
 [agent]
 stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
+integrations = ["javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.0"]
 
 [postMerge]
 path = "scripts/post-merge.sh"

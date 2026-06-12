@@ -4,26 +4,21 @@ import type {
   TopupConfig, TopupRunSummary, TopupRunState, TopupLogEntry,
   WalletStakingInfo,
 } from './types';
-import { auth } from './firebase';
-
-/** Get current user's Firebase ID token (refreshes automatically if near-expiry). */
-async function getIdToken(): Promise<string | null> {
-  const user = auth.currentUser;
-  if (!user) return null;
-  return user.getIdToken();
-}
 
 async function request<T>(url: string, init?: RequestInit & { headers?: Record<string, string> }): Promise<T> {
   const { headers: extraHeaders, ...rest } = init ?? {};
-  const token = await getIdToken();
   const res = await fetch(url, {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...extraHeaders,
     },
     ...rest,
   });
+  if (res.status === 401) {
+    window.location.href = '/api/login';
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((err as any).error ?? res.statusText);
@@ -32,10 +27,11 @@ async function request<T>(url: string, init?: RequestInit & { headers?: Record<s
 }
 
 async function requestBlob(url: string): Promise<{ blob: Blob; filename: string }> {
-  const token = await getIdToken();
-  const res = await fetch(url, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  });
+  const res = await fetch(url, { credentials: 'include' });
+  if (res.status === 401) {
+    window.location.href = '/api/login';
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((err as any).error ?? res.statusText);
@@ -54,15 +50,13 @@ export const api = {
   importWallets: async (rawText: string) => {
     const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
     const data = btoa(unescape(encodeURIComponent(text)));
-    const token = await getIdToken();
     const res = await fetch('/api/wallets/import', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ data }).toString(),
     });
+    if (res.status === 401) { window.location.href = '/api/login'; throw new Error('Unauthorized'); }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error((err as any).error ?? res.statusText);
@@ -116,7 +110,7 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
-  // Sweep — fire-and-forget; poll getSweepStatus for progress
+  // Sweep
   startSweep: (params: {
     ids: string[];
     mode: SweepMode;
