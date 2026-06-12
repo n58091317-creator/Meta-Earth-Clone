@@ -11,18 +11,17 @@ import { log, logError } from './logger';
 import { WalletInfo } from './wallet';
 
 // ── Chain config ───────────────────────────────────────────────────────────────
-// Daily check-in goes to the ROLLUP chain via broadcastTxAsync (mempool only).
-// The rollup stopped producing blocks 2026-05-01, but the Meta Earth backend
-// records check-ins from mempool acceptance. This is confirmed from live mempool
-// inspection — ALL real bots in the rollup mempool use this same approach.
-const ROLLUP_RPC: Record<string, string> = {
-  mainnet: 'http://118.175.0.247:23011',
-  testnet: 'http://118.175.0.249:46657',
-};
-const ROLLUP_CHAIN_ID: Record<string, string> = {
-  mainnet: 'mecheckin_101-1',
-  testnet: 'mecheckin_100-1',
-};
+// There are TWO rollup chains:
+//   NEW (active): mecheckin_401-1 at 118.175.0.249:46657 — producing blocks
+//     Connected to new hub mechain_400-1. Requires account to exist (funded via
+//     IBC from new hub). Check in here if the wallet is activated.
+//   OLD (dead): mecheckin_101-1 at 118.175.0.247:23011 — no blocks since 2026-05-01
+//     Mempool permanently full at 5000 txs. Bot falls back here if wallet not on new chain.
+// Strategy: try new rollup first; fall back to old rollup if wallet not activated.
+const NEW_ROLLUP_RPC    = 'http://118.175.0.249:46657';
+const NEW_ROLLUP_CHAIN  = 'mecheckin_401-1';
+const OLD_ROLLUP_RPC    = 'http://118.175.0.247:23011';
+const OLD_ROLLUP_CHAIN  = 'mecheckin_101-1';
 const ADDRESS_PREFIX = 'me';
 
 // ── Check-in type ──────────────────────────────────────────────────────────────
@@ -42,13 +41,11 @@ function buildMsgCheckInType(): Type {
 }
 const MsgCheckInType = buildMsgCheckInType();
 
-// Rollup fee: IBC MEC denom with amount "0" — matches what real check-in bots use in the mempool.
-// Even though the rollup's fee_checker.go requires no minimum fee, specifying the IBC denom
-// with amount "0" gives the tx the same priority as other bots, preventing mempool eviction
-// when the mempool is full (5000 tx cap). Gas 500000 matches real bots (live mempool confirmed).
-const ROLLUP_IBC_DENOM = 'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
+// Rollup fee: empty amount array with gas 500000 — matches real check-in txs on mecheckin_401-1.
+// The rollup's fee_checker.go has no minimum gas price, so zero-fee txs pass CheckTx fine.
+// Real bots in the new rollup use empty fee arrays (confirmed from live chain inspection 2026-06-12).
 const ROLLUP_FEE = {
-  amount: [{ denom: ROLLUP_IBC_DENOM, amount: '0' }],
+  amount: [] as { denom: string; amount: string }[],
   gas: '500000',
 };
 
@@ -85,90 +82,141 @@ function parseExpectedSequence(logMsg: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+/** Check-in on a specific chain. Returns null if the wallet account doesn't exist there. */
+async function checkinOnChain(
+  wallet: WalletInfo,
+  rpc: string,
+  chainId: string,
+  message: string,
+): Promise<{ code: number; logMsg: string; hash: string } | null> {
+  const signer = await buildSigner(wallet);
+  const registry = new Registry([...defaultRegistryTypes]);
+  registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
+
+  const tmClient = await Tendermint37Client.connect(rpc);
+  const client = await SigningStargateClient.createWithSigner(tmClient, signer, {
+    registry,
+    prefix: ADDRESS_PREFIX,
+  });
+
+  let accountNumber = 0;
+  let sequence = 0;
+  try {
+    const acct = await client.getSequence(wallet.address);
+    accountNumber = acct.accountNumber;
+    sequence = acct.sequence;
+  } catch (e: any) {
+    // Account not found — caller decides whether to fall back
+    if (e?.message?.includes('does not exist') || e?.message?.includes('not found')) {
+      return null;
+    }
+    // Other error: re-throw
+    throw e;
+  }
+
+  const msg = {
+    typeUrl: CHECKIN_TYPE_URL,
+    value: MsgCheckInType.fromObject({
+      checkInAddress: wallet.address,
+      checkInMessage: message,
+    }),
+  };
+
+  async function tryBroadcast(seq: number): Promise<{ code: number; logMsg: string; hash: string }> {
+    const signed = await client.sign(wallet.address, [msg], ROLLUP_FEE, '', {
+      accountNumber,
+      sequence: seq,
+      chainId,
+    });
+    const txBytes = encodeTxRaw(signed);
+    const res = await (tmClient as any).broadcastTxSync({ tx: txBytes });
+    const code = res.code ?? 0;
+    const logMsg = res.log ?? '';
+
+    // Code 9 = account doesn't exist (fee payer check) — signal caller to fall back
+    if (code === 9 && logMsg.includes('does not exist')) {
+      return { code, logMsg, hash: '' };
+    }
+    return {
+      code,
+      logMsg,
+      hash: Buffer.from(res.hash).toString('hex').toUpperCase(),
+    };
+  }
+
+  // Attempt with on-chain sequence
+  let result = await tryBroadcast(sequence);
+
+  // Code 32 = sequence mismatch (mempool has pending tx at this seq, common on old dead rollup).
+  // Parse the expected sequence and retry once.
+  if (result.code === 32) {
+    const expected = parseExpectedSequence(result.logMsg);
+    if (expected !== null && expected !== sequence) {
+      log(`${wallet.label} sequence mismatch — on-chain: ${sequence}, mempool expects: ${expected}. Retrying...`);
+      result = await tryBroadcast(expected);
+    }
+  }
+
+  return result;
+}
+
 export async function performCheckin(
   wallet: WalletInfo,
   network = 'mainnet',
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  const rpc     = ROLLUP_RPC[network]     ?? ROLLUP_RPC.mainnet;
-  const chainId = ROLLUP_CHAIN_ID[network] ?? ROLLUP_CHAIN_ID.mainnet;
+): Promise<{ success: boolean; txHash?: string; chain?: string; error?: string }> {
   const message = process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!';
 
   log(`Starting daily check-in for ${wallet.label} (${wallet.address})`);
-  log(`  chain   : ${chainId}`);
   log(`  typeUrl : ${CHECKIN_TYPE_URL}`);
   log(`  message : ${message}`);
-  log(`  rpc     : ${rpc}`);
-  log(`  fee     : ibc/BC7F4D... amount=0, gas=500000, broadcastTxSync`);
 
   try {
-    const signer = await buildSigner(wallet);
-    const registry = new Registry([...defaultRegistryTypes]);
-    registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
+    // ── Step 1: Try the NEW active rollup first ────────────────────────────────
+    log(`  Trying NEW rollup: ${NEW_ROLLUP_CHAIN} @ ${NEW_ROLLUP_RPC}`);
+    let result = await checkinOnChain(wallet, NEW_ROLLUP_RPC, NEW_ROLLUP_CHAIN, message);
 
-    const tmClient = await Tendermint37Client.connect(rpc);
-    const client = await SigningStargateClient.createWithSigner(tmClient, signer, {
-      registry,
-      prefix: ADDRESS_PREFIX,
-    });
+    if (result === null || (result.code === 9 && result.logMsg.includes('does not exist'))) {
+      // Wallet not activated on new rollup — fall back to old rollup
+      if (result === null) {
+        log(`${wallet.label}: wallet account NOT found on new rollup (mecheckin_401-1).`);
+      } else {
+        log(`${wallet.label}: new rollup rejected tx — account not activated (code 9).`);
+      }
+      log(`  ⚠️  To use the new rollup, your wallet needs MEC tokens on the new hub (mechain_400-1).`);
+      log(`  ⚠️  Contact Meta Earth support or use the Meta Earth app to activate your wallet.`);
+      log(`  Falling back to OLD rollup: ${OLD_ROLLUP_CHAIN} @ ${OLD_ROLLUP_RPC}`);
 
-    let accountNumber = 0;
-    let sequence = 0;
-    try {
-      const acct = await client.getSequence(wallet.address);
-      accountNumber = acct.accountNumber;
-      sequence = acct.sequence;
-    } catch {
+      result = await checkinOnChain(wallet, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, message);
+
+      if (result === null) {
+        return {
+          success: false,
+          error: `Wallet not found on either rollup chain. Wallet must be activated on mecheckin_401-1 via Meta Earth app.`,
+        };
+      }
+
+      if (result.code !== 0) {
+        return {
+          success: false,
+          error: `Old rollup CheckTx code ${result.code}: ${result.logMsg}`,
+        };
+      }
+
+      log(`${wallet.label} ✓ check-in accepted by OLD rollup mempool (${OLD_ROLLUP_CHAIN}). TX: ${result.hash}`);
+      log(`  ℹ️  Note: meta-earth backend may or may not process old rollup txs.`);
+      return { success: true, txHash: result.hash, chain: OLD_ROLLUP_CHAIN };
+    }
+
+    // ── Step 2: New rollup responded (account exists) ─────────────────────────
+    if (result.code !== 0) {
       return {
         success: false,
-        error: 'Account not found on rollup — wallet must have received tokens first',
+        error: `New rollup CheckTx code ${result.code}: ${result.logMsg}`,
       };
     }
 
-    const msg = {
-      typeUrl: CHECKIN_TYPE_URL,
-      value: MsgCheckInType.fromObject({
-        checkInAddress: wallet.address,
-        checkInMessage: message,
-      }),
-    };
-
-    async function tryBroadcast(seq: number): Promise<{ code: number; logMsg: string; hash: string }> {
-      const signed = await client.sign(wallet.address, [msg], ROLLUP_FEE, '', {
-        accountNumber,
-        sequence: seq,
-        chainId,
-      });
-      const txBytes = encodeTxRaw(signed);
-      // Use broadcastTxSync so we get real CheckTx results (errors, sequence mismatches).
-      // The rollup fee_checker.go has no min gas price, so fee=0 txs pass CheckTx fine.
-      const res = await (tmClient as any).broadcastTxSync({ tx: txBytes });
-      return {
-        code: res.code ?? 0,
-        logMsg: res.log ?? '',
-        hash: Buffer.from(res.hash).toString('hex').toUpperCase(),
-      };
-    }
-
-    // Attempt 1 with on-chain sequence
-    let result = await tryBroadcast(sequence);
-
-    // Code 32 = sequence mismatch: mempool already has a pending tx at this sequence
-    // (from a previous check-in that was never delivered because the rollup stopped
-    // producing blocks). Parse the expected sequence from the error and retry once.
-    if (result.code === 32) {
-      const expected = parseExpectedSequence(result.logMsg);
-      if (expected !== null && expected !== sequence) {
-        log(`${wallet.label} sequence mismatch — on-chain: ${sequence}, mempool expects: ${expected}. Retrying...`);
-        result = await tryBroadcast(expected);
-      }
-    }
-
-    if (result.code !== 0) {
-      return { success: false, error: `CheckTx code ${result.code}: ${result.logMsg}` };
-    }
-
-    log(`${wallet.label} check-in accepted by rollup mempool. TX: ${result.hash}`);
-    return { success: true, txHash: result.hash };
+    log(`${wallet.label} ✓ check-in accepted by NEW rollup (${NEW_ROLLUP_CHAIN}). TX: ${result.hash}`);
+    return { success: true, txHash: result.hash, chain: NEW_ROLLUP_CHAIN };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }
@@ -186,6 +234,7 @@ export async function runCheckinForAll(
     wallet: string;
     success: boolean;
     txHash?: string;
+    chain?: string;
     error?: string;
   }> = [];
 
@@ -208,4 +257,22 @@ export async function runCheckinForAll(
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ── Direct invocation: run check-in now (used by checkin-now script) ──────────
+const _argv1 = process.argv[1] ?? '';
+const _isMain = _argv1.endsWith('/checkin.ts') || _argv1.endsWith('/checkin.js');
+
+if (_isMain) {
+  (async () => {
+    // Dynamic import avoids circular dep issues; dotenv loaded by wallet.ts
+    const { loadAllWallets } = await import('./wallet');
+    const wallets = await loadAllWallets();
+    const network = process.env.NETWORK ?? 'mainnet';
+    await runCheckinForAll(wallets, network);
+    process.exit(0);
+  })().catch((err) => {
+    console.error('checkin-now failed:', err);
+    process.exit(1);
+  });
 }

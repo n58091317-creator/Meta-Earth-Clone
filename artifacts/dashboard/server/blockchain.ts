@@ -9,20 +9,27 @@ import { Tendermint37Client } from '@cosmjs/tendermint-rpc';
 import { Type, Field, Root, Writer } from 'protobufjs';
 import { StoredWallet } from './store';
 
-const HUB_RPC = 'http://118.175.0.247:16657';
+const HUB_RPC  = 'http://118.175.0.247:16657';
 const HUB_REST = 'http://118.175.0.247:11317';
-const ROLLUP_RPC: Record<string, string> = {
-  mainnet: 'http://118.175.0.247:23011',
-  testnet: 'http://118.175.0.249:46657',
-};
-const ROLLUP_REST: Record<string, string> = {
-  mainnet: 'http://118.175.0.247:23013',
-  testnet: 'http://118.175.0.249:3317',
-};
-const ROLLUP_CHAIN_ID: Record<string, string> = {
-  mainnet: 'mecheckin_101-1',
-  testnet: 'mecheckin_100-1',
-};
+
+// ── Rollup chain config ─────────────────────────────────────────────────────
+// NEW rollup (mecheckin_401-1): alive, producing blocks since its genesis.
+//   Connected to new hub mechain_400-1. Requires wallet account to exist (funded via IBC).
+//   Only the ~80 genesis accounts from the new hub exist here.
+// OLD rollup (mecheckin_101-1): dead, no blocks since 2026-05-01.
+//   Mempool permanently at 5000 txs. Still accepts new txs (code=0), used as fallback.
+// Strategy: try NEW rollup first; fall back to OLD rollup if wallet not activated.
+const NEW_ROLLUP_RPC   = 'http://118.175.0.249:46657';
+const NEW_ROLLUP_REST  = 'http://118.175.0.249:3317';
+const NEW_ROLLUP_CHAIN = 'mecheckin_401-1';
+const OLD_ROLLUP_RPC   = 'http://118.175.0.247:23011';
+const OLD_ROLLUP_REST  = 'http://118.175.0.247:11317';
+const OLD_ROLLUP_CHAIN = 'mecheckin_101-1';
+
+// Keep legacy references for balance queries (prefer new rollup first)
+const ROLLUP_RPC: Record<string, string>   = { mainnet: NEW_ROLLUP_RPC,  testnet: NEW_ROLLUP_RPC  };
+const ROLLUP_REST: Record<string, string>  = { mainnet: NEW_ROLLUP_REST, testnet: NEW_ROLLUP_REST };
+const ROLLUP_CHAIN_ID: Record<string, string> = { mainnet: NEW_ROLLUP_CHAIN, testnet: NEW_ROLLUP_CHAIN };
 
 // IBC: hub channel-1 → rollup channel-0
 const IBC_HUB_CHANNEL    = 'channel-1';
@@ -32,13 +39,11 @@ export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '10000' }], gas: '500000' };
-// Rollup fee: IBC MEC denom with amount "0" — matches what real check-in bots use in the mempool.
-// Even though the rollup's fee_checker.go requires no minimum fee, specifying the IBC denom
-// with amount "0" gives the tx the same priority as other bots, preventing mempool eviction
-// when the mempool is full (5000 tx cap). Empty fee arrays get dropped when mempool is full.
-// Gas 500000 matches real bots (confirmed from live mempool inspection).
+// Rollup fee: empty amount array with gas 500000 — matches real check-in txs on mecheckin_401-1.
+// The rollup's fee_checker.go has no minimum gas price, so zero-fee txs pass CheckTx fine.
+// Real bots on the new active rollup use empty fee arrays (confirmed from live chain 2026-06-12).
 const ROLLUP_FEE = {
-  amount: [{ denom: 'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5', amount: '0' }],
+  amount: [] as { denom: string; amount: string }[],
   gas: '500000',
 };
 const ADDRESS_PREFIX = 'me';
@@ -154,9 +159,8 @@ async function buildHubClient(wallet: StoredWallet): Promise<SigningStargateClie
   );
 }
 
-async function buildRollupClient(wallet: StoredWallet, network = 'mainnet') {
+async function buildRollupClient(wallet: StoredWallet, rpc: string) {
   const signer = await buildSigner(wallet);
-  const rpc = ROLLUP_RPC[network] ?? ROLLUP_RPC.mainnet;
   const registry = new Registry([...defaultRegistryTypes]);
   registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
   const { tmClient, client } = await withTimeout(CLIENT_TIMEOUT_MS, 'buildRollupClient', async () => {
@@ -242,50 +246,71 @@ async function signAndBroadcast(
   };
 }
 
+/** Broadcast to one specific rollup chain. Returns null if wallet account doesn't exist. */
+async function rollupBroadcastToChain(
+  wallet: StoredWallet,
+  msgs: any[],
+  memo: string,
+  rpc: string,
+  chainId: string,
+): Promise<TxResult | null> {
+  const { tmClient, client } = await buildRollupClient(wallet, rpc);
+
+  let accountNumber = 0;
+  let sequence = 0;
+  try {
+    const acct = await client.getSequence(wallet.address);
+    accountNumber = acct.accountNumber;
+    sequence = acct.sequence;
+  } catch (e: any) {
+    if (e?.message?.includes('does not exist') || e?.message?.includes('not found')) {
+      return null; // wallet not activated on this chain
+    }
+    throw e;
+  }
+
+  let result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, sequence);
+
+  // Code 9 = fee payer doesn't exist — wallet not activated (caught via broadcastTxSync)
+  if (result.code === 9 && result.log.includes('does not exist')) {
+    return null;
+  }
+
+  // Code 32 = sequence mismatch — retry with expected sequence
+  if (result.code === 32) {
+    const expectedSeq = parseExpectedSequence(result.log);
+    if (expectedSeq !== null && expectedSeq !== sequence) {
+      console.log(`[blockchain] Sequence mismatch for ${wallet.label}: expected ${expectedSeq}, retrying...`);
+      result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, expectedSeq);
+    }
+  }
+
+  if (result.code !== 0) {
+    return { success: false, error: `CheckTx code ${result.code}: ${result.log}` };
+  }
+  return { success: true, txHash: result.hash };
+}
+
 async function rollupBroadcast(
   wallet: StoredWallet,
   msgs: any[],
   memo = '',
-  network = 'mainnet'
+  _network = 'mainnet'
 ): Promise<TxResult> {
   try {
-    const { tmClient, client } = await buildRollupClient(wallet, network);
-    const chainId = ROLLUP_CHAIN_ID[network] ?? ROLLUP_CHAIN_ID.mainnet;
+    // Try NEW rollup first (mecheckin_401-1)
+    const newResult = await rollupBroadcastToChain(wallet, msgs, memo, NEW_ROLLUP_RPC, NEW_ROLLUP_CHAIN);
+    if (newResult !== null) return newResult;
 
-    let accountNumber = 0;
-    let sequence = 0;
-    try {
-      const acct = await client.getSequence(wallet.address);
-      accountNumber = acct.accountNumber;
-      sequence = acct.sequence;
-    } catch {
-      return {
-        success: false,
-        error: 'Account not found on chain — wallet must receive tokens to activate before it can check in',
-        permanent: true,
-      };
+    // Wallet not activated on new rollup — fall back to old rollup
+    console.log(`[blockchain] ${wallet.label}: wallet not on new rollup (mecheckin_401-1), falling back to old rollup.`);
+    console.log(`[blockchain]   ⚠️  To use new rollup, activate wallet via Meta Earth app (get MEC on mechain_400-1).`);
+
+    const oldResult = await rollupBroadcastToChain(wallet, msgs, memo, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN);
+    if (oldResult === null) {
+      return { success: false, error: 'Wallet not found on either rollup chain. Activate via Meta Earth app.' };
     }
-
-    // Attempt 1: broadcast with on-chain sequence
-    let result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, sequence);
-
-    // Code 32 = sequence mismatch — the mempool already has a pending tx for this
-    // wallet at this sequence (from a previous check-in that hasn't been delivered
-    // because the rollup stopped producing blocks). Parse the expected sequence from
-    // the error log and retry once with the correct value.
-    if (result.code === 32) {
-      const expectedSeq = parseExpectedSequence(result.log);
-      if (expectedSeq !== null && expectedSeq !== sequence) {
-        console.log(`[blockchain] Sequence mismatch for ${wallet.label}: expected ${expectedSeq}, retrying...`);
-        result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, expectedSeq);
-      }
-    }
-
-    if (result.code !== 0) {
-      return { success: false, error: `CheckTx code ${result.code}: ${result.log}` };
-    }
-
-    return { success: true, txHash: result.hash };
+    return oldResult;
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }

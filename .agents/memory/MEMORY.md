@@ -3,3 +3,4 @@
 - [MsgNewRecord = Show E, NOT check-in](hub-checkin-msgnewrecord.md) — /metaearth.wstaking.MsgNewRecord on hub triggers "Show E" in the Meta Earth app; never use for daily check-in.
 - [Replit api-server artifact routing](replit-api-server-proxy.md) — Replit auto-creates an api-server on port 8080 that intercepts /api/* browser requests; must proxy it to the real server.
 - [Firebase → Replit Auth migration](firebase-to-replit-auth.md) — Dashboard replaced Firebase Auth with Replit OIDC; auth integration files live in artifacts/dashboard/server/replit_integrations/auth/; sessions table in PG; frontend uses /api/login+logout redirects.
+- [Meta Earth dual-chain ecosystem](meta-earth-dual-chain.md) — Two separate ecosystems at 118.175.0.247 (old) and 118.175.0.249 (new). Bot tries new rollup first, falls back to old. Wallet activation on new chain requires MEC on new hub (mechain_400-1).

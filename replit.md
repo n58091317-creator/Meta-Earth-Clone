@@ -26,20 +26,23 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 
 ## Architecture decisions
 
-- **Daily check-in is `/stchain.rollapp.checkin.MsgCheckIn`** on the **rollup chain** (`mecheckin_101-1`) via `broadcastTxAsync`. Confirmed from live rollup mempool inspection 2026-06-10 — ALL real bots in the mempool use this exact type URL with 2 fields.
-- **MsgCheckIn fields** (2 only): `checkInAddress` (1, wallet address), `checkInMessage` (2, e.g. `"META EARTH! ME, My Way!"`). NO timezone field — real mempool txs have 2 fields only.
-- The rollup chain stopped producing blocks on 2026-05-01, but its **mempool still accepts transactions**. The Meta Earth backend records check-ins from mempool acceptance — `broadcastTxAsync` is sufficient.
-- **Rollup RPC**: `http://118.175.0.247:23011` (chain ID `mecheckin_101-1`, prefix `me`, REST port `23013`).
-- **Rollup fee**: zero — custom `fee_checker.go` has no minimum fee requirement. Gas limit: `200 000`.
-- **Broadcast mode**: `broadcastTxAsync` — bypasses CheckTx so zero-fee txs are accepted by the mempool.
+- **Daily check-in is `/stchain.rollapp.checkin.MsgCheckIn`** on the rollup chain via `broadcastTxSync`. Confirmed from live rollup mempool inspection 2026-06-10 — ALL real bots use this exact type URL with 2 fields.
+- **MsgCheckIn fields** (2 only): `checkInAddress` (1, wallet address), `checkInMessage` (2, e.g. `"META EARTH! ME, My Way!"`). NO timezone field.
+- **Dual-chain strategy** (implemented 2026-06-12): Meta Earth runs TWO separate ecosystems. Bot tries new rollup first, falls back to old rollup automatically.
+  - **NEW rollup** `mecheckin_401-1` at `118.175.0.249:46657` — alive, producing real blocks. Paired with new hub `mechain_400-1` at `118.175.0.249:26657`. Has ~80 genesis accounts only. IBC denom on rollup = `ibc/BC7F4D...` (umec via `transfer/channel-0`).
+  - **OLD rollup** `mecheckin_101-1` at `118.175.0.247:23011` — dead (no blocks since 2026-05-01), mempool permanently full at 5000 txs. Still accepts new txs (code=0). Used as fallback.
+- **Wallet activation blocker**: Our wallet `me1zjf6fqzyvlk4ta4awnezzyd9jawpuq4en4l6jc` is NOT in the new ecosystem's genesis (~80 accounts). Cannot submit txs to new rollup until wallet has MEC on the new hub (`mechain_400-1`). To activate: use the Meta Earth app to transfer MEC to the new chain.
+- **Old rollup**: wallet CAN submit (sequence handled via code-32 retry), used as fallback until activation.
+- **Fee**: empty amount array `[]` + gas `500000` for rollup txs (confirmed from real new-chain txs 2026-06-12).
+- **Broadcast mode**: `broadcastTxSync` — gives real CheckTx result including sequence mismatch (code 32) and account-not-found (code 9).
 - Bot uses `@cosmjs/stargate` + `@cosmjs/proto-signing` + `@cosmjs/tendermint-rpc` directly.
 - `protobufjs` overridden to `^7.4.0` in `pnpm-workspace.yaml` — version 6.x blocked by Replit security policy.
-- **Hub chain (me-hub)**: RPC `http://118.175.0.247:16657` (chain ID `me-chain`). Has `wstaking` module with `MsgNewRecord` — this is the **Show E task** module, **NOT daily check-in**. Using `MsgNewRecord` for check-in triggers "Show E" in the Meta Earth app, not "Daily Sign-in".
-- **Hub `mechain.checkin.MsgCheckIn`**: Defined in the `meta-earth` proto repo but NOT compiled into the running me-hub binary. The hub has no `checkin` module in `x/`.
+- **Old hub** `me-chain` at `118.175.0.247:16657`: has `wstaking` module with `MsgNewRecord` — this is the **Show E task** module, **NOT daily check-in**. Our wallet has 2000 umec here (seq 50). NOT connected to new rollup via IBC.
+- **New hub** `mechain_400-1` at `118.175.0.249:26657`: ~80 genesis accounts each with 200000000 umec. IBC channel-1 → new rollup channel-0. Our wallet NOT in genesis.
 
 ## Product
 
-Daily check-in bot that signs and broadcasts a `MsgCheckIn` transaction on the Meta Earth rollup chain (`mecheckin_101-1`) via `broadcastTxAsync` on a configurable cron schedule. Supports multiple wallets via numbered `PRIVATE_KEY_1`, `PRIVATE_KEY_2`, ... or `MNEMONIC_1`, `MNEMONIC_2`, ... secrets.
+Daily check-in bot that signs and broadcasts a `MsgCheckIn` transaction. Tries new rollup (`mecheckin_401-1`) first; falls back to old rollup (`mecheckin_101-1`) when wallet not activated on new chain. Supports multiple wallets via numbered `PRIVATE_KEY_1`, `PRIVATE_KEY_2`, ... or `MNEMONIC_1`, `MNEMONIC_2`, ... secrets.
 
 ## User preferences
 
