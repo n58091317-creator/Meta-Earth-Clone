@@ -1,8 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
+  signInWithEmailAndPassword as firebaseSignInWithEmail,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   type User,
@@ -21,12 +20,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-const googleProvider = new GoogleAuthProvider();
-
 export type { User };
 
-export async function signInWithGoogle(): Promise<void> {
-  await signInWithPopup(auth, googleProvider);
+export async function signInWithEmail(email: string, password: string): Promise<void> {
+  await firebaseSignInWithEmail(auth, email, password);
 }
 
 export async function signOut(): Promise<void> {

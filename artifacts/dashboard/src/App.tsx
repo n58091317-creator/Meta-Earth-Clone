@@ -7,7 +7,7 @@ import { SweepTab } from './components/SweepTab';
 import { StakingTab } from './components/StakingTab';
 import { ExportTab } from './components/ExportTab';
 import { TopUpTab } from './components/TopUpTab';
-import { auth, signInWithGoogle, signOut, onAuthChange, type User } from './firebase';
+import { signInWithEmail, signOut, onAuthChange, type User } from './firebase';
 
 export interface AppState {
   wallets: Wallet[];
@@ -44,7 +44,9 @@ export default function App() {
 
   const [user, setUser]           = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [signingIn, setSigningIn] = useState(false);
+  const [email, setEmail]             = useState('');
+  const [password, setPassword]       = useState('');
+  const [signingIn, setSigningIn]     = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,13 +61,24 @@ export default function App() {
     setBalancesMap(prev => ({ ...prev, [id]: b }));
   }, []);
 
-  const handleSignIn = async () => {
+  const handleSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password) return;
     setSigningIn(true);
     setSignInError(null);
     try {
-      await signInWithGoogle();
-    } catch (e: any) {
-      setSignInError(e?.message ?? 'Sign-in failed. Please try again.');
+      await signInWithEmail(email.trim(), password);
+    } catch (err: any) {
+      const code = err?.code ?? '';
+      if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        setSignInError('Incorrect email or password.');
+      } else if (code === 'auth/invalid-email') {
+        setSignInError('Please enter a valid email address.');
+      } else if (code === 'auth/too-many-requests') {
+        setSignInError('Too many attempts. Please try again later.');
+      } else {
+        setSignInError(err?.message ?? 'Sign-in failed. Please try again.');
+      }
     } finally {
       setSigningIn(false);
     }
@@ -92,26 +105,47 @@ export default function App() {
             <h1 className="mt-3 text-2xl font-bold text-white">Meta Earth Dashboard</h1>
             <p className="mt-1 text-sm text-slate-400">Sign in to manage your wallets</p>
           </div>
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
-            <button
-              onClick={handleSignIn}
-              disabled={signingIn}
-              className="flex items-center justify-center gap-3 w-full py-2.5 bg-white hover:bg-slate-100 disabled:opacity-60 text-slate-800 text-sm font-semibold rounded-lg transition-colors"
-            >
-              <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
-                <g fill="none" fillRule="evenodd">
-                  <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
-                  <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
-                  <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
-                  <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
-                </g>
-              </svg>
-              {signingIn ? 'Signing in…' : 'Sign in with Google'}
-            </button>
+          <form
+            onSubmit={handleSignIn}
+            className="bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl space-y-4"
+          >
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+                required
+                className="w-full bg-slate-800 text-slate-200 text-sm rounded-lg border border-slate-600 px-3 py-2.5 focus:outline-none focus:border-blue-500 placeholder:text-slate-600 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                required
+                className="w-full bg-slate-800 text-slate-200 text-sm rounded-lg border border-slate-600 px-3 py-2.5 focus:outline-none focus:border-blue-500 placeholder:text-slate-600 transition-colors"
+              />
+            </div>
             {signInError && (
-              <p className="mt-3 text-xs text-red-400 text-center">{signInError}</p>
+              <p className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
+                {signInError}
+              </p>
             )}
-          </div>
+            <button
+              type="submit"
+              disabled={signingIn || !email.trim() || !password}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors"
+            >
+              {signingIn ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
           <p className="mt-4 text-center text-xs text-slate-600">
             Access restricted — authorised users only
           </p>
