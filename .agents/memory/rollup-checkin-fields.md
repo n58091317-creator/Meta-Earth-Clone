@@ -1,27 +1,35 @@
 ---
 name: Rollup MsgCheckIn — correct type URL and fields
-description: The correct daily check-in proto for the NEW rollup (mecheckin_401-1). Fields are creator/slogan/recoverInterruption — NOT checkInAddress/checkInMessage.
+description: Correct check-in proto confirmed by Meta Earth team. /mechain.checkin.MsgCheckIn with checkInAddress/checkInMessage/checkInTimezone on the rollup.
 ---
 
 ## Rule
-Daily check-in: **`/stchain.rollapp.checkin.MsgCheckIn`** with **3 fields** on rollup chain, broadcast via `broadcastTxSync`.
+Daily check-in: **`/mechain.checkin.MsgCheckIn`** with **3 fields** on the official check-in rollup, broadcast via `broadcastTxSync`.
 
-**Confirmed from live rollup REST tx decode (2026-06-13):**
-- Decoded real transactions via `GET /cosmos/tx/v1beta1/txs?events=message.action=...`
-- Real tx JSON: `{ "@type": "/stchain.rollapp.checkin.MsgCheckIn", "creator": "me1...", "slogan": "META EARTH! ME, My Way!", "recover_interruption": false }`
-- 3 fields in standard Ignite scaffold order: `creator` (1), `slogan` (2), `recover_interruption` (3, bool)
-- Fee: empty amount array `[]`, gas `500000`
+**Confirmed by Meta Earth technical team (2026-06-13):**
+- Type URL: `/mechain.checkin.MsgCheckIn`
+- Proto source: `repos/meta-earth/proto/mechain/checkin/tx.proto` (package `mechain.checkin`)
+- 3 fields: `check_in_address` (1), `check_in_message` (2), `check_in_timezone` (3)
+- In protobufjs (camelCase): `checkInAddress`, `checkInMessage`, `checkInTimezone`
+- Example: `checkInAddress=me1...`, `checkInMessage="META EARTH! ME, My Way!"`, `checkInTimezone="UTC"`
+- CLI example from repo: `check-in 'ME, My Way!' 'Asia/Shanghai'`
+- Fee: `{ amount: [], gas: '500000' }` (zero fee — rollup has no min gas price)
+- Chain ID: dynamically fetched from `/status` at broadcast time — team says `mecheckin_400-1` but live RPC at `118.175.0.249:46657` reports `mecheckin_401-1`; fetching dynamically handles both
 
-**Why the old 2-field version was wrong:**
-- The previous memory entry (from 2026-06-10 mempool inspection) identified fields as `checkInAddress` + `checkInMessage` — this was incorrect
-- The old rollup (`mecheckin_101-1`) was dead and its mempool txs may have been from older bot versions
-- The NEW active rollup (`mecheckin_401-1`, alive as of 2026-06-13 at block 2,275,335) uses the Ignite-scaffolded 3-field format
-- The meta-earth hub repo proto (`/mechain.checkin.MsgCheckIn`) uses `checkInAddress/checkInMessage/checkInTimezone` — this is the HUB type, NOT the rollup type
+**Why the previous entries were wrong:**
+- `/stchain.rollapp.checkin.MsgCheckIn` with `creator/slogan/recoverInterruption` was decoded from old mempool txs (2026-06-10 and 2026-06-13) — those txs were from a different/older bot or a non-official rollup instance
+- The official Meta Earth team explicitly confirmed `/mechain.checkin.MsgCheckIn` is the correct module
+- The hub repo `meta-earth` has the authoritative proto at `proto/mechain/checkin/tx.proto`
 
 **How to apply:**
-- typeUrl: `/stchain.rollapp.checkin.MsgCheckIn`
-- protobufjs fields: `creator` (1, string), `slogan` (2, string), `recoverInterruption` (3, bool)
-- message object: `{ creator: wallet.address, slogan: 'META EARTH! ME, My Way!', recoverInterruption: false }`
+- typeUrl: `/mechain.checkin.MsgCheckIn`
+- protobufjs fields: `checkInAddress` (1, string), `checkInMessage` (2, string), `checkInTimezone` (3, string)
+- message object: `{ checkInAddress: wallet.address, checkInMessage: '...', checkInTimezone: 'UTC' }`
 - fee: `{ amount: [], gas: '500000' }`
-- broadcast: `broadcastTxSync` (gives real CheckTx code)
-- chain: try NEW rollup first (`mecheckin_401-1` at `118.175.0.249:46657`), fall back to OLD (`mecheckin_101-1` at `118.175.0.247:23011`)
+- chain ID: fetch from `GET <rpc>/status` → `result.node_info.network` before signing
+- RPC: `http://118.175.0.249:46657` (primary, from meta-earth-js-sdk config)
+- Fallback: old rollup `mecheckin_101-1` at `http://118.175.0.247:23011`
+- New wallets need testnet tokens from faucet: `https://www.mec.me/en-US/faucet`
+
+**Explorer:** `https://www.explorer-testnet.me/zh-TW/home`
+**Developer docs:** `https://docs.mec.me/docs/development-guides/developer-guide`

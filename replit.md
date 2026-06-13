@@ -26,12 +26,13 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 
 ## Architecture decisions
 
-- **Daily check-in is `/stchain.rollapp.checkin.MsgCheckIn`** on the rollup chain via `broadcastTxSync`. Confirmed from live rollup REST decode 2026-06-13.
-- **MsgCheckIn fields** (3 fields): `creator` (1, wallet address), `slogan` (2, e.g. `"META EARTH! ME, My Way!"`), `recoverInterruption` (3, bool, always `false`). Standard Ignite scaffold layout.
-- **Dual-chain strategy** (implemented 2026-06-12): Meta Earth runs TWO separate ecosystems. Bot tries new rollup first, falls back to old rollup automatically.
-  - **NEW rollup** `mecheckin_401-1` at `118.175.0.249:46657` — alive, producing real blocks. Paired with new hub `mechain_400-1` at `118.175.0.249:26657`. Has ~80 genesis accounts only. IBC denom on rollup = `ibc/BC7F4D...` (umec via `transfer/channel-0`).
+- **Daily check-in is `/mechain.checkin.MsgCheckIn`** on the rollup chain via `broadcastTxSync`. Confirmed by Meta Earth technical team 2026-06-13. Source proto: `repos/meta-earth/proto/mechain/checkin/tx.proto`.
+- **MsgCheckIn fields** (3 fields): `checkInAddress` (1, wallet address), `checkInMessage` (2, e.g. `"META EARTH! ME, My Way!"`), `checkInTimezone` (3, string e.g. `"UTC"`).
+- **Chain ID is fetched dynamically** from the rollup RPC `/status` endpoint at broadcast time. The rollup at `118.175.0.249:46657` currently reports `mecheckin_401-1` but the official chain ID confirmed by the team is `mecheckin_400-1`. Dynamic fetch ensures the correct signing chain ID is always used.
+- **Dual-chain strategy**: Bot fetches chain ID from new rollup first, falls back to old rollup if wallet not activated.
+  - **NEW rollup** at `118.175.0.249:46657` — alive, producing real blocks. Hub: `mechain_400-1` at `118.175.0.249:26657` (public: `https://beta-hub-26657.explorer-testnet.me`). New wallets must get testnet tokens from faucet: `https://www.mec.me/en-US/faucet`.
   - **OLD rollup** `mecheckin_101-1` at `118.175.0.247:23011` — dead (no blocks since 2026-05-01), mempool permanently full at 5000 txs. Still accepts new txs (code=0). Used as fallback.
-- **Wallet activation blocker**: Our wallet `me1zjf6fqzyvlk4ta4awnezzyd9jawpuq4en4l6jc` is NOT in the new ecosystem's genesis (~80 accounts). Cannot submit txs to new rollup until wallet has MEC on the new hub (`mechain_400-1`). To activate: use the Meta Earth app to transfer MEC to the new chain.
+- **Wallet activation**: New wallets need testnet tokens before they can check in. Use faucet: `https://www.mec.me/en-US/faucet`.
 - **Old rollup**: wallet CAN submit (sequence handled via code-32 retry), used as fallback until activation.
 - **Fee**: empty amount array `[]` + gas `500000` for rollup txs (confirmed from real new-chain txs 2026-06-12).
 - **Broadcast mode**: `broadcastTxSync` — gives real CheckTx result including sequence mismatch (code 32) and account-not-found (code 9).
@@ -50,9 +51,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-- **Correct rollup check-in type URL is `/stchain.rollapp.checkin.MsgCheckIn`** with **3 fields**: `creator` (1, address), `slogan` (2, message text), `recoverInterruption` (3, bool false). Confirmed from live rollup REST tx decode 2026-06-13.
+- **Correct rollup check-in type URL is `/mechain.checkin.MsgCheckIn`** with **3 fields**: `checkInAddress` (1, wallet address), `checkInMessage` (2, message text), `checkInTimezone` (3, timezone string e.g. `"UTC"`). Confirmed by Meta Earth technical team 2026-06-13. Proto: `repos/meta-earth/proto/mechain/checkin/tx.proto`.
+- **DO NOT use `/stchain.rollapp.checkin.MsgCheckIn`** (creator/slogan/recoverInterruption) — this was the wrong module identified from old dead rollup mempool txs; the official team confirmed `/mechain.checkin.MsgCheckIn` is correct.
 - **DO NOT use `/metaearth.wstaking.MsgNewRecord` for check-in** — that is the "Show E" task module on the hub chain. Sending `MsgNewRecord` triggers "Show E" in the Meta Earth app, not "Daily Sign-in".
-- **DO NOT use `/mechain.checkin.MsgCheckIn`** (3-field proto from meta-earth repo) — the hub has no compiled `checkin` module; the rollup is dead and this type is not processed.
 - **Use `broadcastTxSync` for rollup txs** — the node's min gas price is 0, so fee=0 txs pass CheckTx fine. Sync gives us the real CheckTx result (error code + log) instead of silently dropping the tx.
 - **Sequence mismatch (code 32)** — the mempool is permanently full at 5000 txs (no blocks since 2026-05-01). A wallet's first check-in tx (sequence 0) stays in the mempool forever. Subsequent check-ins get "expected 1, got 0". The code parses the expected sequence from the error and retries automatically. This is handled in both `checkin.ts` and `blockchain.ts`.
 - **Fee structure** — use `ibc/BC7F4D581D...CBC5` denom with amount `"0"` and gas `500000` (matches real bots in mempool). Empty fee arrays also work but may be deprioritized.
@@ -71,6 +72,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 | `RUN_ON_START` | `true` |
 | `CRON_SCHEDULE` | `0 8 * * *` (08:00 UTC daily, optional) |
 | `CHECK_IN_MESSAGE` | Custom check-in message (optional, defaults to `META EARTH! ME, My Way!`) |
+| `CHECK_IN_TIMEZONE` | Timezone for check-in (optional, defaults to `UTC`, e.g. `Asia/Shanghai`) |
 
 ## Dashboard login (Replit Auth)
 

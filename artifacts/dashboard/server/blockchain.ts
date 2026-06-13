@@ -13,23 +13,26 @@ const HUB_RPC  = 'http://118.175.0.247:16657';
 const HUB_REST = 'http://118.175.0.247:11317';
 
 // ── Rollup chain config ─────────────────────────────────────────────────────
-// NEW rollup (mecheckin_401-1): alive, producing blocks since its genesis.
-//   Connected to new hub mechain_400-1. Requires wallet account to exist (funded via IBC).
-//   Only the ~80 genesis accounts from the new hub exist here.
-// OLD rollup (mecheckin_101-1): dead, no blocks since 2026-05-01.
-//   Mempool permanently at 5000 txs. Still accepts new txs (code=0), used as fallback.
-// Strategy: try NEW rollup first; fall back to OLD rollup if wallet not activated.
+// Official check-in rollup: mecheckin_400-1 (confirmed by Meta Earth team 2026-06-13).
+//   SDK config points to 118.175.0.249:46657. Chain ID is fetched dynamically at
+//   broadcast time via /status so we always sign with the chain's actual ID.
+// NEW wallets need testnet tokens before they can check in: https://www.mec.me/en-US/faucet
+// OLD rollup (mecheckin_101-1): dead, no blocks since 2026-05-01. Used as fallback.
 const NEW_ROLLUP_RPC   = 'http://118.175.0.249:46657';
 const NEW_ROLLUP_REST  = 'http://118.175.0.249:3317';
-const NEW_ROLLUP_CHAIN = 'mecheckin_401-1';
 const OLD_ROLLUP_RPC   = 'http://118.175.0.247:23011';
 const OLD_ROLLUP_REST  = 'http://118.175.0.247:11317';
 const OLD_ROLLUP_CHAIN = 'mecheckin_101-1';
 
-// Keep legacy references for balance queries (prefer new rollup first)
-const ROLLUP_RPC: Record<string, string>   = { mainnet: NEW_ROLLUP_RPC,  testnet: NEW_ROLLUP_RPC  };
-const ROLLUP_REST: Record<string, string>  = { mainnet: NEW_ROLLUP_REST, testnet: NEW_ROLLUP_REST };
-const ROLLUP_CHAIN_ID: Record<string, string> = { mainnet: NEW_ROLLUP_CHAIN, testnet: NEW_ROLLUP_CHAIN };
+const ROLLUP_RPC: Record<string, string>  = { mainnet: NEW_ROLLUP_RPC,  testnet: NEW_ROLLUP_RPC  };
+const ROLLUP_REST: Record<string, string> = { mainnet: NEW_ROLLUP_REST, testnet: NEW_ROLLUP_REST };
+
+/** Fetch the chain's actual chain ID from its /status endpoint. */
+async function fetchRollupChainId(rpc: string): Promise<string> {
+  const res = await fetchWithTimeout(`${rpc.replace(/\/$/, '')}/status`);
+  const data = await res.json() as any;
+  return data?.result?.node_info?.network as string;
+}
 
 // IBC: hub channel-1 → rollup channel-0
 const IBC_HUB_CHANNEL    = 'channel-1';
@@ -39,9 +42,8 @@ export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '10000' }], gas: '500000' };
-// Rollup fee: empty amount array with gas 500000 — matches real check-in txs on mecheckin_401-1.
+// Rollup fee: empty amount array with gas 500000.
 // The rollup's fee_checker.go has no minimum gas price, so zero-fee txs pass CheckTx fine.
-// Real bots on the new active rollup use empty fee arrays (confirmed from live chain 2026-06-12).
 const ROLLUP_FEE = {
   amount: [] as { denom: string; amount: string }[],
   gas: '500000',
@@ -67,21 +69,19 @@ function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promis
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
-// Check-in type URL — confirmed from live rollup REST inspection (2026-06-13).
-// Real txs on mecheckin_401-1 use /stchain.rollapp.checkin.MsgCheckIn with 3 fields:
-//   creator (1, string), slogan (2, string), recover_interruption (3, bool).
-// NOTE: meta-earth hub uses a different MsgCheckIn with checkInAddress/checkInMessage/checkInTimezone.
-// The ROLLUP uses creator/slogan/recover_interruption — confirmed from live tx REST decode.
-const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
+// Check-in type URL — confirmed by Meta Earth technical team (2026-06-13).
+// Source: repos/meta-earth/proto/mechain/checkin/tx.proto  (package mechain.checkin)
+// Executed on the rollup (mecheckin_400-1 / mecheckin_401-1), NOT on the hub.
+// DO NOT use /stchain.rollapp.checkin.MsgCheckIn — wrong module.
+const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
 
-// 3 fields — confirmed from decoding real txs on mecheckin_401-1 via REST (2026-06-13).
-// Standard Ignite scaffold layout: creator=1, slogan=2, recover_interruption=3 (bool).
+// 3 fields from meta-earth proto tx.proto: checkInAddress (1), checkInMessage (2), checkInTimezone (3).
 function buildMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
-    .add(new Field('creator', 1, 'string'))
-    .add(new Field('slogan', 2, 'string'))
-    .add(new Field('recoverInterruption', 3, 'bool'));
+    .add(new Field('checkInAddress',  1, 'string'))
+    .add(new Field('checkInMessage',  2, 'string'))
+    .add(new Field('checkInTimezone', 3, 'string'));
   root.add(T);
   return T;
 }
@@ -300,17 +300,24 @@ async function rollupBroadcast(
   _network = 'mainnet'
 ): Promise<TxResult> {
   try {
-    // Try NEW rollup first (mecheckin_401-1)
-    const newResult = await rollupBroadcastToChain(wallet, msgs, memo, NEW_ROLLUP_RPC, NEW_ROLLUP_CHAIN);
-    if (newResult !== null) return newResult;
+    // Fetch the real chain ID from the NEW rollup's /status, then try it first
+    let newChainId: string | null = null;
+    try {
+      newChainId = await fetchRollupChainId(NEW_ROLLUP_RPC);
+    } catch {
+      console.log(`[blockchain] NEW rollup unreachable, falling back to old rollup.`);
+    }
 
-    // Wallet not activated on new rollup — fall back to old rollup
-    console.log(`[blockchain] ${wallet.label}: wallet not on new rollup (mecheckin_401-1), falling back to old rollup.`);
-    console.log(`[blockchain]   ⚠️  To use new rollup, activate wallet via Meta Earth app (get MEC on mechain_400-1).`);
+    if (newChainId) {
+      const newResult = await rollupBroadcastToChain(wallet, msgs, memo, NEW_ROLLUP_RPC, newChainId);
+      if (newResult !== null) return newResult;
+      console.log(`[blockchain] ${wallet.label}: wallet not on new rollup (${newChainId}), falling back to old rollup.`);
+      console.log(`[blockchain]   ⚠️  Activate wallet: get testnet tokens at https://www.mec.me/en-US/faucet`);
+    }
 
     const oldResult = await rollupBroadcastToChain(wallet, msgs, memo, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN);
     if (oldResult === null) {
-      return { success: false, error: 'Wallet not found on either rollup chain. Activate via Meta Earth app.' };
+      return { success: false, error: 'Wallet not found on either rollup chain. Get testnet tokens at https://www.mec.me/en-US/faucet' };
     }
     return oldResult;
   } catch (err: any) {
@@ -495,19 +502,19 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
-// ─── Daily check-in: MsgCheckIn on rollup via broadcastTxSync ───────────────
-// Type URL and fields confirmed from live rollup REST inspection (2026-06-13):
-//   /stchain.rollapp.checkin.MsgCheckIn  with 3 fields:
-//   creator (1, string), slogan (2, string), recover_interruption (3, bool).
-// New rollup mecheckin_401-1 is alive and processing blocks. Wallet must be
-// activated on new chain (have MEC on mechain_400-1) — falls back to old rollup otherwise.
+// ─── Daily check-in: MsgCheckIn on rollup ────────────────────────────────────
+// Confirmed by Meta Earth technical team (2026-06-13):
+//   Type URL: /mechain.checkin.MsgCheckIn  (from meta-earth proto mechain/checkin/tx.proto)
+//   Fields: checkInAddress (1), checkInMessage (2), checkInTimezone (3).
+// Chain ID is fetched dynamically from the rollup RPC /status at broadcast time.
+// New wallets need testnet tokens from https://www.mec.me/en-US/faucet first.
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
   const msg = {
     typeUrl: CHECKIN_TYPE_URL,
     value: MsgCheckInType.fromObject({
-      creator:              wallet.address,
-      slogan:               process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
-      recoverInterruption:  false,
+      checkInAddress:  wallet.address,
+      checkInMessage:  process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
+      checkInTimezone: process.env.CHECK_IN_TIMEZONE ?? 'UTC',
     }),
   };
   return rollupBroadcast(wallet, [msg], '', network);

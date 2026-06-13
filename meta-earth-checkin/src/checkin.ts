@@ -11,37 +11,44 @@ import { log, logError } from './logger';
 import { WalletInfo } from './wallet';
 
 // ── Chain config ───────────────────────────────────────────────────────────────
-// There are TWO rollup chains:
-//   NEW (active): mecheckin_401-1 at 118.175.0.249:46657 — producing blocks
-//     Connected to new hub mechain_400-1. Requires account to exist (funded via
-//     IBC from new hub). Check in here if the wallet is activated.
-//   OLD (dead): mecheckin_101-1 at 118.175.0.247:23011 — no blocks since 2026-05-01
-//     Mempool permanently full at 5000 txs. Bot falls back here if wallet not on new chain.
-// Strategy: try new rollup first; fall back to old rollup if wallet not activated.
+// Official check-in rollup: mecheckin_400-1 (confirmed by Meta Earth team 2026-06-13).
+//   SDK config points to 118.175.0.249:46657. Chain may report mecheckin_401-1 at
+//   runtime (use dynamic chain ID fetch to always sign with the real chain's ID).
+// OLD rollup (mecheckin_101-1): dead, no blocks since 2026-05-01. Used as fallback.
+// New wallets need testnet tokens from https://www.mec.me/en-US/faucet first.
 const NEW_ROLLUP_RPC    = 'http://118.175.0.249:46657';
-const NEW_ROLLUP_CHAIN  = 'mecheckin_401-1';
 const OLD_ROLLUP_RPC    = 'http://118.175.0.247:23011';
 const OLD_ROLLUP_CHAIN  = 'mecheckin_101-1';
 const ADDRESS_PREFIX = 'me';
 
 // ── Check-in type ──────────────────────────────────────────────────────────────
-// Confirmed from live rollup REST inspection (2026-06-13):
-//   Real txs on mecheckin_401-1 use /stchain.rollapp.checkin.MsgCheckIn with 3 fields:
-//   creator (1, string), slogan (2, string), recover_interruption (3, bool).
-// NOTE: meta-earth hub has a DIFFERENT MsgCheckIn (checkInAddress/checkInMessage/checkInTimezone).
-// DO NOT use /metaearth.wstaking.MsgNewRecord (Show E module — different task entirely).
-const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
+// Confirmed by Meta Earth technical team (2026-06-13):
+//   Type URL is /mechain.checkin.MsgCheckIn on the rollup (mecheckin_400-1).
+//   Source: repos/meta-earth/proto/mechain/checkin/tx.proto
+// Fields: checkInAddress (1), checkInMessage (2), checkInTimezone (3).
+// DO NOT use /stchain.rollapp.checkin.MsgCheckIn (wrong module).
+// DO NOT use /metaearth.wstaking.MsgNewRecord (Show E — different task entirely).
+const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
 
 function buildMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
-    .add(new Field('creator', 1, 'string'))
-    .add(new Field('slogan', 2, 'string'))
-    .add(new Field('recoverInterruption', 3, 'bool'));
+    .add(new Field('checkInAddress', 1, 'string'))
+    .add(new Field('checkInMessage', 2, 'string'))
+    .add(new Field('checkInTimezone', 3, 'string'));
   root.add(T);
   return T;
 }
 const MsgCheckInType = buildMsgCheckInType();
+
+/** Fetch the actual chain ID from an RPC endpoint's /status. */
+async function fetchChainId(rpc: string): Promise<string> {
+  const url = rpc.replace(/\/$/, '') + '/status';
+  const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+  if (!res.ok) throw new Error(`/status HTTP ${res.status}`);
+  const data = await res.json() as any;
+  return data?.result?.node_info?.network as string;
+}
 
 // Rollup fee: empty amount array with gas 500000 — matches real check-in txs on mecheckin_401-1.
 // The rollup's fee_checker.go has no minimum gas price, so zero-fee txs pass CheckTx fine.
@@ -90,6 +97,7 @@ async function checkinOnChain(
   rpc: string,
   chainId: string,
   message: string,
+  timezone: string,
 ): Promise<{ code: number; logMsg: string; hash: string } | null> {
   const signer = await buildSigner(wallet);
   const registry = new Registry([...defaultRegistryTypes]);
@@ -119,9 +127,9 @@ async function checkinOnChain(
   const msg = {
     typeUrl: CHECKIN_TYPE_URL,
     value: MsgCheckInType.fromObject({
-      creator:             wallet.address,
-      slogan:              message,
-      recoverInterruption: false,
+      checkInAddress:  wallet.address,
+      checkInMessage:  message,
+      checkInTimezone: timezone,
     }),
   };
 
@@ -167,59 +175,62 @@ export async function performCheckin(
   wallet: WalletInfo,
   network = 'mainnet',
 ): Promise<{ success: boolean; txHash?: string; chain?: string; error?: string }> {
-  const message = process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!';
+  const message  = process.env.CHECK_IN_MESSAGE  ?? 'META EARTH! ME, My Way!';
+  const timezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
 
   log(`Starting daily check-in for ${wallet.label} (${wallet.address})`);
-  log(`  typeUrl : ${CHECKIN_TYPE_URL}`);
-  log(`  message : ${message}`);
+  log(`  typeUrl  : ${CHECKIN_TYPE_URL}`);
+  log(`  message  : ${message}`);
+  log(`  timezone : ${timezone}`);
 
   try {
-    // ── Step 1: Try the NEW active rollup first ────────────────────────────────
-    log(`  Trying NEW rollup: ${NEW_ROLLUP_CHAIN} @ ${NEW_ROLLUP_RPC}`);
-    let result = await checkinOnChain(wallet, NEW_ROLLUP_RPC, NEW_ROLLUP_CHAIN, message);
-
-    if (result === null || (result.code === 9 && result.logMsg.includes('does not exist'))) {
-      // Wallet not activated on new rollup — fall back to old rollup
-      if (result === null) {
-        log(`${wallet.label}: wallet account NOT found on new rollup (mecheckin_401-1).`);
-      } else {
-        log(`${wallet.label}: new rollup rejected tx — account not activated (code 9).`);
-      }
-      log(`  ⚠️  To use the new rollup, your wallet needs MEC tokens on the new hub (mechain_400-1).`);
-      log(`  ⚠️  Contact Meta Earth support or use the Meta Earth app to activate your wallet.`);
-      log(`  Falling back to OLD rollup: ${OLD_ROLLUP_CHAIN} @ ${OLD_ROLLUP_RPC}`);
-
-      result = await checkinOnChain(wallet, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, message);
-
-      if (result === null) {
-        return {
-          success: false,
-          error: `Wallet not found on either rollup chain. Wallet must be activated on mecheckin_401-1 via Meta Earth app.`,
-        };
-      }
-
-      if (result.code !== 0) {
-        return {
-          success: false,
-          error: `Old rollup CheckTx code ${result.code}: ${result.logMsg}`,
-        };
-      }
-
-      log(`${wallet.label} ✓ check-in accepted by OLD rollup mempool (${OLD_ROLLUP_CHAIN}). TX: ${result.hash}`);
-      log(`  ℹ️  Note: meta-earth backend may or may not process old rollup txs.`);
-      return { success: true, txHash: result.hash, chain: OLD_ROLLUP_CHAIN };
+    // ── Step 1: Fetch the NEW rollup's actual chain ID from its /status ────────
+    let newRollupChain: string;
+    try {
+      newRollupChain = await fetchChainId(NEW_ROLLUP_RPC);
+      log(`  NEW rollup chain ID: ${newRollupChain} @ ${NEW_ROLLUP_RPC}`);
+    } catch (e: any) {
+      log(`  NEW rollup unreachable (${e?.message}), falling back to old rollup.`);
+      newRollupChain = '';
     }
 
-    // ── Step 2: New rollup responded (account exists) ─────────────────────────
-    if (result.code !== 0) {
+    if (newRollupChain) {
+      let result = await checkinOnChain(wallet, NEW_ROLLUP_RPC, newRollupChain, message, timezone);
+
+      if (result === null || (result.code === 9 && result.logMsg.includes('does not exist'))) {
+        if (result === null) {
+          log(`${wallet.label}: wallet account NOT found on new rollup (${newRollupChain}).`);
+        } else {
+          log(`${wallet.label}: new rollup rejected tx — account not activated (code 9).`);
+        }
+        log(`  ⚠️  To activate wallet on new rollup, get testnet tokens from https://www.mec.me/en-US/faucet`);
+        log(`  Falling back to OLD rollup: ${OLD_ROLLUP_CHAIN} @ ${OLD_ROLLUP_RPC}`);
+      } else {
+        if (result.code !== 0) {
+          return { success: false, error: `New rollup CheckTx code ${result.code}: ${result.logMsg}` };
+        }
+        log(`${wallet.label} ✓ check-in accepted by NEW rollup (${newRollupChain}). TX: ${result.hash}`);
+        return { success: true, txHash: result.hash, chain: newRollupChain };
+      }
+    }
+
+    // ── Step 2: Fall back to OLD rollup ───────────────────────────────────────
+    const result = await checkinOnChain(wallet, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, message, timezone);
+
+    if (result === null) {
       return {
         success: false,
-        error: `New rollup CheckTx code ${result.code}: ${result.logMsg}`,
+        error: `Wallet not found on either rollup chain. Activate wallet via https://www.mec.me/en-US/faucet`,
       };
     }
 
-    log(`${wallet.label} ✓ check-in accepted by NEW rollup (${NEW_ROLLUP_CHAIN}). TX: ${result.hash}`);
-    return { success: true, txHash: result.hash, chain: NEW_ROLLUP_CHAIN };
+    if (result.code !== 0) {
+      return { success: false, error: `Old rollup CheckTx code ${result.code}: ${result.logMsg}` };
+    }
+
+    log(`${wallet.label} ✓ check-in accepted by OLD rollup mempool (${OLD_ROLLUP_CHAIN}). TX: ${result.hash}`);
+    return { success: true, txHash: result.hash, chain: OLD_ROLLUP_CHAIN };
+
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }
