@@ -30,16 +30,22 @@ function initAdmin() {
   adminInitialized = true;
 
   const serviceAccount = loadServiceAccount();
+  const databaseURL = process.env.FIREBASE_DATABASE_URL;
+
   if (serviceAccount) {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
       projectId: process.env.FIREBASE_PROJECT_ID,
+      ...(databaseURL ? { databaseURL } : {}),
     });
     console.log('[auth] Firebase Admin initialised with service account');
     return;
   }
 
-  admin.initializeApp({ projectId: process.env.FIREBASE_PROJECT_ID });
+  admin.initializeApp({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    ...(databaseURL ? { databaseURL } : {}),
+  });
   console.warn('[auth] Firebase Admin initialised without service account — token verification may fail');
 }
 

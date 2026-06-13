@@ -177,4 +177,9 @@ export const api = {
     request<{ total: number; synced: number; alreadyHad: number; noCredentials: number; errors: string[] }>(
       '/api/admin/migrate-credentials', { method: 'POST' }
     ),
+
+  syncFirebase: () =>
+    request<{ imported: number; skipped: number; errors: string[] }>(
+      '/api/sync-firebase', { method: 'POST' }
+    ),
 };

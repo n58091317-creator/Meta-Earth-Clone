@@ -95,6 +95,10 @@ export function WalletsTab() {
   const [renameValue, setRenameValue]   = useState('');
   const [savingRename, setSavingRename] = useState(false);
 
+  // Firebase sync
+  const [syncing, setSyncing]       = useState(false);
+  const [syncResult, setSyncResult] = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
+
   // Other state
   const [loadingBalances, setLoadingBalances] = useState(false);
   const [refreshingId, setRefreshingId]       = useState<string | null>(null);
@@ -214,6 +218,20 @@ export function WalletsTab() {
     await loadWallets();
   };
 
+  const handleSyncFirebase = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const r = await api.syncFirebase();
+      setSyncResult(r);
+      if (r.imported > 0) await loadWallets();
+    } catch (e: any) {
+      setError('Firebase sync failed: ' + e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const copyAddr = (addr: string) => {
     navigator.clipboard.writeText(addr);
     setCopied(addr);
@@ -265,6 +283,14 @@ export function WalletsTab() {
           ↑ Bulk Import
         </button>
         <button
+          onClick={handleSyncFirebase}
+          disabled={syncing}
+          className="px-4 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7zm0 2a5 5 0 0 0-5 5c0 1.9.99 3.56 2.5 4.5V17h5v-3.5A5 5 0 0 0 17 9a5 5 0 0 0-5-5zm-1 14h2v1h-2v-1zm0 2h2v1h-2v-1z"/></svg>
+          {syncing ? 'Syncing…' : '⚡ Sync from Firebase'}
+        </button>
+        <button
           onClick={refreshAllBalances}
           disabled={loadingBalances || wallets.length === 0}
           className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-lg text-sm font-medium transition-colors"
@@ -272,6 +298,32 @@ export function WalletsTab() {
           {loadingBalances ? '⏳ Refreshing…' : '⟳ Refresh All Balances'}
         </button>
       </div>
+
+      {/* Firebase sync result */}
+      {syncResult && (
+        <div className={`rounded-lg px-4 py-3 text-sm flex items-start justify-between gap-4 ${
+          syncResult.imported > 0
+            ? 'bg-green-500/10 border border-green-500/30 text-green-300'
+            : 'bg-slate-700/50 border border-slate-600 text-slate-300'
+        }`}>
+          <div>
+            <span className="font-medium">
+              {syncResult.imported > 0
+                ? `✓ Imported ${syncResult.imported} wallet(s) from Firebase`
+                : `Firebase sync complete — ${syncResult.skipped} already existed, nothing new`}
+            </span>
+            {syncResult.skipped > 0 && syncResult.imported > 0 && (
+              <span className="ml-2 text-slate-400 text-xs">({syncResult.skipped} skipped — already in dashboard)</span>
+            )}
+            {syncResult.errors.length > 0 && (
+              <ul className="mt-1 text-xs text-red-300 list-disc list-inside">
+                {syncResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            )}
+          </div>
+          <button onClick={() => setSyncResult(null)} className="text-slate-400 hover:text-white shrink-0">✕</button>
+        </div>
+      )}
 
       {/* Wallet Table */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">

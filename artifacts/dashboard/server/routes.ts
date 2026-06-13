@@ -43,6 +43,7 @@ import {
   isTopupRunning,
 } from './topup';
 import { migrateCredentialsViaRest } from './migrate-credentials';
+import * as admin from 'firebase-admin';
 
 export const router = Router();
 
@@ -548,5 +549,60 @@ router.get('/export', async (req, res) => {
     res.send(csvRows.join('\n'));
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? 'Export failed' });
+  }
+});
+
+// ─── Firebase RTDB Sync ───────────────────────────────────────────────────────
+
+/**
+ * Recursively walks a Firebase RTDB snapshot value and collects all string
+ * leaf values that look like a mnemonic (12-24 words) or a private key (64-char hex).
+ */
+function extractCredentials(node: unknown, collected: string[] = []): string[] {
+  if (node === null || node === undefined) return collected;
+  if (typeof node === 'string') {
+    const trimmed = node.trim();
+    // Private key: 64 hex chars (with or without 0x)
+    if (/^(?:0x)?[a-fA-F0-9]{64}$/.test(trimmed)) {
+      collected.push(trimmed);
+      return collected;
+    }
+    // Mnemonic: 12–24 lowercase words separated by spaces
+    const words = trimmed.toLowerCase().replace(/\s+/g, ' ').split(' ').filter(w => /^[a-z]+$/.test(w));
+    if ([12, 15, 18, 21, 24].includes(words.length)) {
+      collected.push(words.join(' '));
+      return collected;
+    }
+    return collected;
+  }
+  if (typeof node === 'object') {
+    for (const val of Object.values(node as Record<string, unknown>)) {
+      extractCredentials(val, collected);
+    }
+  }
+  return collected;
+}
+
+router.post('/sync-firebase', async (_req, res) => {
+  try {
+    const db = admin.database();
+    const snapshot = await db.ref('/').once('value');
+    const raw = snapshot.val();
+
+    if (raw === null) {
+      return res.json({ imported: 0, skipped: 0, errors: [], note: 'Firebase RTDB is empty' });
+    }
+
+    const credentials = extractCredentials(raw);
+    if (credentials.length === 0) {
+      return res.json({ imported: 0, skipped: 0, errors: [], note: 'No mnemonics or private keys found in Firebase RTDB' });
+    }
+
+    const text = credentials.join('\n');
+    const result = await parseBulkImport(text);
+    res.json(result);
+  } catch (e: any) {
+    console.error('[sync-firebase]', e?.message);
+    res.status(500).json({ error: e?.message ?? 'Firebase sync failed' });
   }
 });
