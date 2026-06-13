@@ -1,4 +1,4 @@
-import { pool } from '../../db';
+import * as admin from 'firebase-admin';
 
 export interface User {
   id: string;
@@ -23,30 +23,52 @@ export interface IAuthStorage {
   upsertUser(user: UpsertUser): Promise<User>;
 }
 
-class AuthStorage implements IAuthStorage {
+class FirestoreAuthStorage implements IAuthStorage {
+  private get db() {
+    return admin.firestore();
+  }
+
   async getUser(id: string): Promise<User | undefined> {
-    const { rows } = await pool.query(
-      'SELECT * FROM auth_users WHERE id = $1',
-      [id]
-    );
-    return rows[0] ?? undefined;
+    const doc = await this.db.collection('users').doc(id).get();
+    if (!doc.exists) return undefined;
+    const data = doc.data()!;
+    return {
+      id,
+      email:           data.email          ?? null,
+      firstName:       data.firstName      ?? null,
+      lastName:        data.lastName       ?? null,
+      profileImageUrl: data.profileImageUrl ?? null,
+      createdAt:       data.createdAt      ?? null,
+      updatedAt:       data.updatedAt      ?? null,
+    };
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
-    const { rows } = await pool.query(
-      `INSERT INTO auth_users (id, email, first_name, last_name, profile_image_url, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         email             = EXCLUDED.email,
-         first_name        = EXCLUDED.first_name,
-         last_name         = EXCLUDED.last_name,
-         profile_image_url = EXCLUDED.profile_image_url,
-         updated_at        = NOW()
-       RETURNING *`,
-      [userData.id, userData.email ?? null, userData.firstName ?? null, userData.lastName ?? null, userData.profileImageUrl ?? null]
-    );
-    return rows[0];
+    const now = new Date().toISOString();
+    const ref = this.db.collection('users').doc(userData.id);
+    const existing = await ref.get();
+
+    const updates: Record<string, any> = {
+      email:           userData.email           ?? null,
+      firstName:       userData.firstName       ?? null,
+      lastName:        userData.lastName        ?? null,
+      profileImageUrl: userData.profileImageUrl ?? null,
+      updatedAt:       now,
+    };
+
+    if (!existing.exists) {
+      updates.createdAt = now;
+      await ref.set(updates);
+    } else {
+      await ref.update(updates);
+    }
+
+    const createdAt = existing.exists
+      ? (existing.data()?.createdAt ?? now)
+      : now;
+
+    return { id: userData.id, ...updates, createdAt };
   }
 }
 
-export const authStorage = new AuthStorage();
+export const authStorage = new FirestoreAuthStorage();

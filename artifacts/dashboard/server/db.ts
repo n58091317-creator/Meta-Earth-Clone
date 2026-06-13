@@ -46,7 +46,6 @@ export async function initDb() {
     )
   `);
   await pool.query(`INSERT INTO topup_config (id) VALUES (1) ON CONFLICT DO NOTHING`);
-  // Migrations — add IBC top-up columns if they don't exist yet
   await pool.query(`ALTER TABLE topup_config ADD COLUMN IF NOT EXISTS ibc_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
   await pool.query(`ALTER TABLE topup_config ADD COLUMN IF NOT EXISTS ibc_threshold_umec INT NOT NULL DEFAULT 5000`);
   await pool.query(`ALTER TABLE topup_config ADD COLUMN IF NOT EXISTS ibc_amount_umec INT NOT NULL DEFAULT 50000`);
@@ -69,32 +68,7 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS topup_log_executed_idx ON topup_log (executed_at DESC)
   `);
 
-  // Migration — add tx_type column to topup_log for hub vs ibc entries
   await pool.query(`ALTER TABLE topup_log ADD COLUMN IF NOT EXISTS tx_type TEXT NOT NULL DEFAULT 'hub'`);
 
-  // Replit Auth tables
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      sid    VARCHAR NOT NULL COLLATE "default" PRIMARY KEY,
-      sess   JSON NOT NULL,
-      expire TIMESTAMP(6) NOT NULL
-    )
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS IDX_session_expire ON sessions (expire)
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS auth_users (
-      id                TEXT PRIMARY KEY,
-      email             TEXT UNIQUE,
-      first_name        TEXT,
-      last_name         TEXT,
-      profile_image_url TEXT,
-      created_at        TIMESTAMPTZ DEFAULT NOW(),
-      updated_at        TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  console.log('[db] Tables ready (wallets + checkin_log + topup_config + topup_log + sessions + auth_users)');
+  console.log('[db] Tables ready (wallets + checkin_log + topup_config + topup_log)');
 }

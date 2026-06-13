@@ -4,19 +4,27 @@ import type {
   TopupConfig, TopupRunSummary, TopupRunState, TopupLogEntry,
   WalletStakingInfo,
 } from './types';
+import { getIdToken } from './firebase';
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const token = await getIdToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function request<T>(url: string, init?: RequestInit & { headers?: Record<string, string> }): Promise<T> {
   const { headers: extraHeaders, ...rest } = init ?? {};
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(url, {
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders,
       ...extraHeaders,
     },
     ...rest,
   });
   if (res.status === 401) {
-    window.location.href = '/api/login';
+    window.location.reload();
     throw new Error('Unauthorized');
   }
   if (!res.ok) {
@@ -27,9 +35,13 @@ async function request<T>(url: string, init?: RequestInit & { headers?: Record<s
 }
 
 async function requestBlob(url: string): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(url, { credentials: 'include' });
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(url, {
+    credentials: 'include',
+    headers: authHeaders,
+  });
   if (res.status === 401) {
-    window.location.href = '/api/login';
+    window.location.reload();
     throw new Error('Unauthorized');
   }
   if (!res.ok) {
@@ -50,13 +62,14 @@ export const api = {
   importWallets: async (rawText: string) => {
     const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
     const data = btoa(unescape(encodeURIComponent(text)));
+    const authHeaders = await getAuthHeaders();
     const res = await fetch('/api/wallets/import', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...authHeaders },
       body: new URLSearchParams({ data }).toString(),
     });
-    if (res.status === 401) { window.location.href = '/api/login'; throw new Error('Unauthorized'); }
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized'); }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error((err as any).error ?? res.statusText);

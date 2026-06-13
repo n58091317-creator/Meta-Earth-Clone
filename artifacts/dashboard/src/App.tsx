@@ -7,6 +7,7 @@ import { SweepTab } from './components/SweepTab';
 import { StakingTab } from './components/StakingTab';
 import { ExportTab } from './components/ExportTab';
 import { TopUpTab } from './components/TopUpTab';
+import { auth, signInWithGoogle, signOut, onAuthChange, type User } from './firebase';
 
 export interface AppState {
   wallets: Wallet[];
@@ -36,38 +37,42 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
-interface AuthUser {
-  id: string;
-  email?: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
-}
-
 export default function App() {
   const [tab, setTab]             = useState<TabId>('wallets');
   const [wallets, setWallets]     = useState<Wallet[]>([]);
   const [balances, setBalancesMap] = useState<Record<string, BalanceEntry['balances']>>({});
 
-  const [user, setUser]           = useState<AuthUser | null>(null);
+  const [user, setUser]           = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/auth/user', { credentials: 'include' })
-      .then(r => {
-        if (r.status === 401) return null;
-        if (!r.ok) throw new Error('auth check failed');
-        return r.json() as Promise<AuthUser>;
-      })
-      .then(u => { setUser(u); setAuthReady(true); })
-      .catch(() => { setUser(null); setAuthReady(true); });
+    const unsubscribe = onAuthChange((firebaseUser) => {
+      setUser(firebaseUser);
+      setAuthReady(true);
+    });
+    return unsubscribe;
   }, []);
 
   const setBalance = useCallback((id: string, b: BalanceEntry['balances']) => {
     setBalancesMap(prev => ({ ...prev, [id]: b }));
   }, []);
 
-  const handleLogout = () => {
-    window.location.href = '/api/logout';
+  const handleSignIn = async () => {
+    setSigningIn(true);
+    setSignInError(null);
+    try {
+      await signInWithGoogle();
+    } catch (e: any) {
+      setSignInError(e?.message ?? 'Sign-in failed. Please try again.');
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut();
   };
 
   if (!authReady) {
@@ -88,12 +93,24 @@ export default function App() {
             <p className="mt-1 text-sm text-slate-400">Sign in to manage your wallets</p>
           </div>
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
-            <a
-              href="/api/login"
-              className="block w-full py-2.5 text-center bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors"
+            <button
+              onClick={handleSignIn}
+              disabled={signingIn}
+              className="flex items-center justify-center gap-3 w-full py-2.5 bg-white hover:bg-slate-100 disabled:opacity-60 text-slate-800 text-sm font-semibold rounded-lg transition-colors"
             >
-              Log in
-            </a>
+              <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                <g fill="none" fillRule="evenodd">
+                  <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+                  <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+                  <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+                  <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+                </g>
+              </svg>
+              {signingIn ? 'Signing in…' : 'Sign in with Google'}
+            </button>
+            {signInError && (
+              <p className="mt-3 text-xs text-red-400 text-center">{signInError}</p>
+            )}
           </div>
           <p className="mt-4 text-center text-xs text-slate-600">
             Access restricted — authorised users only
@@ -104,9 +121,7 @@ export default function App() {
   }
 
   const network = import.meta.env.VITE_NETWORK ?? 'mainnet';
-  const displayName = user.firstName
-    ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`
-    : user.email ?? 'User';
+  const displayName = user.displayName ?? user.email ?? 'User';
 
   return (
     <AppCtx.Provider value={{ wallets, balances, setWallets, setBalance }}>
@@ -123,6 +138,9 @@ export default function App() {
               {network.charAt(0).toUpperCase() + network.slice(1)}
             </span>
             <div className="flex items-center gap-2">
+              {user.photoURL && (
+                <img src={user.photoURL} alt="" className="w-6 h-6 rounded-full" />
+              )}
               <span className="text-xs text-slate-400 hidden sm:block truncate max-w-[160px]">{displayName}</span>
               <button
                 onClick={handleLogout}
