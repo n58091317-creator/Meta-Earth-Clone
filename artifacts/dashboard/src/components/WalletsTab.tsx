@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
-import { readRtdbCredentials } from '../firebase';
+import { readFirestoreCredentials } from '../firebase';
 import { useApp } from '../App';
 
 const UMEC_PER_MEC = 100_000_000;
@@ -223,8 +223,8 @@ export function WalletsTab() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      // Read directly from Firebase RTDB in the browser — avoids server timeouts
-      const credentials = await readRtdbCredentials();
+      // Read directly from Firestore in the browser — avoids server timeouts
+      const credentials = await readFirestoreCredentials();
       if (credentials.length === 0) {
         setSyncResult({ imported: 0, skipped: 0, errors: ['No mnemonic phrases or private keys found in Firebase database'] });
         return;
@@ -295,7 +295,7 @@ export function WalletsTab() {
           className="px-4 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7zm0 2a5 5 0 0 0-5 5c0 1.9.99 3.56 2.5 4.5V17h5v-3.5A5 5 0 0 0 17 9a5 5 0 0 0-5-5zm-1 14h2v1h-2v-1zm0 2h2v1h-2v-1z"/></svg>
-          {syncing ? 'Syncing…' : '⚡ Sync from Firebase'}
+          {syncing ? 'Syncing…' : '⚡ Sync from Firestore'}
         </button>
         <button
           onClick={refreshAllBalances}
