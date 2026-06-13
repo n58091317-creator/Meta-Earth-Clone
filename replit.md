@@ -56,7 +56,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 - **DO NOT use `/metaearth.wstaking.MsgNewRecord` for check-in** — that is the "Show E" task module on the hub chain. Sending `MsgNewRecord` triggers "Show E" in the Meta Earth app, not "Daily Sign-in".
 - **Use `broadcastTxSync` for rollup txs** — the node's min gas price is 0, so fee=0 txs pass CheckTx fine. Sync gives us the real CheckTx result (error code + log) instead of silently dropping the tx.
 - **Sequence mismatch (code 32)** — the mempool is permanently full at 5000 txs (no blocks since 2026-05-01). A wallet's first check-in tx (sequence 0) stays in the mempool forever. Subsequent check-ins get "expected 1, got 0". The code parses the expected sequence from the error and retries automatically. This is handled in both `checkin.ts` and `blockchain.ts`.
-- **Fee structure** — use `ibc/BC7F4D581D...CBC5` denom with amount `"0"` and gas `500000` (matches real bots in mempool). Empty fee arrays also work but may be deprioritized.
+- **Fee structure (per-chain)** — NEW rollup (`mecheckin_401-1`): empty fee array `[]` + gas `500000` (no min gas price). OLD rollup (`mecheckin_101-1`): `[{ denom: 'umec', amount: '500' }]` + gas `500000` (min-gas-price 0.001umec enforced at CheckTx). `NEW_ROLLUP_FEE` / `OLD_ROLLUP_FEE` constants in both `checkin.ts` and `blockchain.ts`.
 - **Testnet rollup REST port is `3317`** (not `46660`) — confirmed from `repos/meta-earth-js-sdk/src/config/define.ts`.
 - `meta-earth-js-sdk` is not published on npm — use local clone in `repos/meta-earth-js-sdk/` for reference, or depend on cosmjs directly.
 - `protobufjs@6.x` is blocked by Replit security policy; override to `^7.4.0` is set in `pnpm-workspace.yaml`.

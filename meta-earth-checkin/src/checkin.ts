@@ -21,16 +21,24 @@ const OLD_ROLLUP_RPC    = 'http://118.175.0.247:23011';
 const OLD_ROLLUP_CHAIN  = 'mecheckin_101-1';
 const ADDRESS_PREFIX = 'me';
 
-// ── Check-in type ──────────────────────────────────────────────────────────────
-// Confirmed by Meta Earth technical team (2026-06-13):
-//   Type URL is /mechain.checkin.MsgCheckIn on the rollup (mecheckin_400-1).
+// ── Check-in proto types ────────────────────────────────────────────────────────
+// Two different rollup chains use different MsgCheckIn schemas:
+//
+// NEW rollup (mecheckin_400-1 / 401-1 at 118.175.0.249:46657):
+//   /mechain.checkin.MsgCheckIn — confirmed by Meta Earth team 2026-06-13
 //   Source: repos/meta-earth/proto/mechain/checkin/tx.proto
-// Fields: checkInAddress (1), checkInMessage (2), checkInTimezone (3).
-// DO NOT use /stchain.rollapp.checkin.MsgCheckIn (wrong module).
-// DO NOT use /metaearth.wstaking.MsgNewRecord (Show E — different task entirely).
-const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
+//   Fields: checkInAddress (1), checkInMessage (2), checkInTimezone (3)
+//
+// OLD rollup (mecheckin_101-1 at 118.175.0.247:23011) — dead/legacy:
+//   /stchain.rollapp.checkin.MsgCheckIn — from live mempool inspection 2026-06-10
+//   Fields: creator (1), slogan (2), recoverInterruption (3, bool)
+//
+// DO NOT use /metaearth.wstaking.MsgNewRecord (Show E — completely different task).
 
-function buildMsgCheckInType(): Type {
+const NEW_CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
+const OLD_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
+
+function buildNewMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
     .add(new Field('checkInAddress', 1, 'string'))
@@ -39,7 +47,19 @@ function buildMsgCheckInType(): Type {
   root.add(T);
   return T;
 }
-const MsgCheckInType = buildMsgCheckInType();
+
+function buildOldMsgCheckInType(): Type {
+  const root = new Root();
+  const T = new Type('MsgCheckIn')
+    .add(new Field('creator', 1, 'string'))
+    .add(new Field('slogan', 2, 'string'))
+    .add(new Field('recoverInterruption', 3, 'bool'));
+  root.add(T);
+  return T;
+}
+
+const NewMsgCheckInType = buildNewMsgCheckInType();
+const OldMsgCheckInType = buildOldMsgCheckInType();
 
 /** Fetch the actual chain ID from an RPC endpoint's /status. */
 async function fetchChainId(rpc: string): Promise<string> {
@@ -50,13 +70,11 @@ async function fetchChainId(rpc: string): Promise<string> {
   return data?.result?.node_info?.network as string;
 }
 
-// Rollup fee: empty amount array with gas 500000 — matches real check-in txs on mecheckin_401-1.
-// The rollup's fee_checker.go has no minimum gas price, so zero-fee txs pass CheckTx fine.
-// Real bots in the new rollup use empty fee arrays (confirmed from live chain inspection 2026-06-12).
-const ROLLUP_FEE = {
-  amount: [] as { denom: string; amount: string }[],
-  gas: '500000',
-};
+// Per-chain fee structures (min-gas-price differs between chains):
+//   NEW rollup: no minimum gas price → empty fee array is fine
+//   OLD rollup: min-gas-price 0.001umec → 0.001 * 500000 = 500umec required
+const NEW_ROLLUP_FEE = { amount: [] as { denom: string; amount: string }[], gas: '500000' };
+const OLD_ROLLUP_FEE = { amount: [{ denom: 'umec', amount: '500' }], gas: '500000' };
 
 // ── Minimal TxRaw encoder (avoids full protobuf dependency) ───────────────────
 function encodeTxRaw(txRaw: {
@@ -96,17 +114,18 @@ async function checkinOnChain(
   wallet: WalletInfo,
   rpc: string,
   chainId: string,
-  message: string,
-  timezone: string,
+  typeUrl: string,
+  msgType: Type,
+  msgValue: Record<string, unknown>,
+  fee: { amount: { denom: string; amount: string }[]; gas: string },
 ): Promise<{ code: number; logMsg: string; hash: string } | null> {
   const signer = await buildSigner(wallet);
   const registry = new Registry([...defaultRegistryTypes]);
-  registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
+  registry.register(typeUrl, msgType as any);
 
   const tmClient = await Tendermint37Client.connect(rpc);
   const client = await SigningStargateClient.createWithSigner(tmClient, signer, {
     registry,
-    prefix: ADDRESS_PREFIX,
   });
 
   let accountNumber = 0;
@@ -125,16 +144,12 @@ async function checkinOnChain(
   }
 
   const msg = {
-    typeUrl: CHECKIN_TYPE_URL,
-    value: MsgCheckInType.fromObject({
-      checkInAddress:  wallet.address,
-      checkInMessage:  message,
-      checkInTimezone: timezone,
-    }),
+    typeUrl,
+    value: msgType.fromObject(msgValue),
   };
 
   async function tryBroadcast(seq: number): Promise<{ code: number; logMsg: string; hash: string }> {
-    const signed = await client.sign(wallet.address, [msg], ROLLUP_FEE, '', {
+    const signed = await client.sign(wallet.address, [msg], fee, '', {
       accountNumber,
       sequence: seq,
       chainId,
@@ -179,32 +194,34 @@ export async function performCheckin(
   const timezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
 
   log(`Starting daily check-in for ${wallet.label} (${wallet.address})`);
-  log(`  typeUrl  : ${CHECKIN_TYPE_URL}`);
   log(`  message  : ${message}`);
   log(`  timezone : ${timezone}`);
 
+  const newMsgValue = { checkInAddress: wallet.address, checkInMessage: message, checkInTimezone: timezone };
+  const oldMsgValue = { creator: wallet.address, slogan: message, recoverInterruption: false };
+
   try {
-    // ── Step 1: Fetch the NEW rollup's actual chain ID from its /status ────────
+    // ── Step 1: Try NEW rollup with /mechain.checkin.MsgCheckIn ───────────────
     let newRollupChain: string;
     try {
       newRollupChain = await fetchChainId(NEW_ROLLUP_RPC);
-      log(`  NEW rollup chain ID: ${newRollupChain} @ ${NEW_ROLLUP_RPC}`);
+      log(`  NEW rollup: ${newRollupChain} @ ${NEW_ROLLUP_RPC}`);
     } catch (e: any) {
       log(`  NEW rollup unreachable (${e?.message}), falling back to old rollup.`);
       newRollupChain = '';
     }
 
     if (newRollupChain) {
-      let result = await checkinOnChain(wallet, NEW_ROLLUP_RPC, newRollupChain, message, timezone);
+      const result = await checkinOnChain(
+        wallet, NEW_ROLLUP_RPC, newRollupChain,
+        NEW_CHECKIN_TYPE_URL, NewMsgCheckInType, newMsgValue, NEW_ROLLUP_FEE,
+      );
 
       if (result === null || (result.code === 9 && result.logMsg.includes('does not exist'))) {
-        if (result === null) {
-          log(`${wallet.label}: wallet account NOT found on new rollup (${newRollupChain}).`);
-        } else {
-          log(`${wallet.label}: new rollup rejected tx — account not activated (code 9).`);
-        }
-        log(`  ⚠️  To activate wallet on new rollup, get testnet tokens from https://www.mec.me/en-US/faucet`);
-        log(`  Falling back to OLD rollup: ${OLD_ROLLUP_CHAIN} @ ${OLD_ROLLUP_RPC}`);
+        if (result === null) log(`${wallet.label}: wallet NOT found on new rollup (${newRollupChain}).`);
+        else                 log(`${wallet.label}: new rollup rejected — account not activated (code 9).`);
+        log(`  ⚠️  Get testnet tokens at https://www.mec.me/en-US/faucet`);
+        log(`  Falling back to OLD rollup (${OLD_ROLLUP_CHAIN})`);
       } else {
         if (result.code !== 0) {
           return { success: false, error: `New rollup CheckTx code ${result.code}: ${result.logMsg}` };
@@ -214,21 +231,20 @@ export async function performCheckin(
       }
     }
 
-    // ── Step 2: Fall back to OLD rollup ───────────────────────────────────────
-    const result = await checkinOnChain(wallet, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, message, timezone);
+    // ── Step 2: OLD rollup with /stchain.rollapp.checkin.MsgCheckIn ──────────
+    const result = await checkinOnChain(
+      wallet, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN,
+      OLD_CHECKIN_TYPE_URL, OldMsgCheckInType, oldMsgValue, OLD_ROLLUP_FEE,
+    );
 
     if (result === null) {
-      return {
-        success: false,
-        error: `Wallet not found on either rollup chain. Activate wallet via https://www.mec.me/en-US/faucet`,
-      };
+      return { success: false, error: `Wallet not found on either rollup. Get testnet tokens at https://www.mec.me/en-US/faucet` };
     }
-
     if (result.code !== 0) {
       return { success: false, error: `Old rollup CheckTx code ${result.code}: ${result.logMsg}` };
     }
 
-    log(`${wallet.label} ✓ check-in accepted by OLD rollup mempool (${OLD_ROLLUP_CHAIN}). TX: ${result.hash}`);
+    log(`${wallet.label} ✓ check-in accepted by OLD rollup (${OLD_ROLLUP_CHAIN}). TX: ${result.hash}`);
     return { success: true, txHash: result.hash, chain: OLD_ROLLUP_CHAIN };
 
   } catch (err: any) {

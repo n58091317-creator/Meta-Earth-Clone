@@ -42,12 +42,11 @@ export const ROLLUP_IBC_DENOM =
   'ibc/BC7F4D581D88785A22824C8FB6807DFC3B65C1764AFF1230D954AAB06B70CBC5';
 
 const HUB_FEE = { amount: [{ denom: 'umec', amount: '10000' }], gas: '500000' };
-// Rollup fee: empty amount array with gas 500000.
-// The rollup's fee_checker.go has no minimum gas price, so zero-fee txs pass CheckTx fine.
-const ROLLUP_FEE = {
-  amount: [] as { denom: string; amount: string }[],
-  gas: '500000',
-};
+// Per-chain fee structures:
+//   NEW rollup: no minimum gas price → empty fee array
+//   OLD rollup: min-gas-price 0.001umec → 500umec for 500000 gas
+const NEW_ROLLUP_FEE = { amount: [] as { denom: string; amount: string }[], gas: '500000' };
+const OLD_ROLLUP_FEE = { amount: [{ denom: 'umec', amount: '500' }], gas: '500000' };
 const ADDRESS_PREFIX = 'me';
 // Hub wstaking module URLs — used for Show E, staking rewards, and unstaking.
 // NOT used for daily check-in.
@@ -69,14 +68,19 @@ function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promis
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
-// Check-in type URL — confirmed by Meta Earth technical team (2026-06-13).
-// Source: repos/meta-earth/proto/mechain/checkin/tx.proto  (package mechain.checkin)
-// Executed on the rollup (mecheckin_400-1 / mecheckin_401-1), NOT on the hub.
-// DO NOT use /stchain.rollapp.checkin.MsgCheckIn — wrong module.
-const CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
+// ── Two MsgCheckIn schemas — one per rollup ──────────────────────────────────
+// NEW rollup (mecheckin_400-1 / 401-1 at 118.175.0.249:46657):
+//   /mechain.checkin.MsgCheckIn — confirmed by Meta Earth team 2026-06-13
+//   Source: repos/meta-earth/proto/mechain/checkin/tx.proto
+//   Fields: checkInAddress (1), checkInMessage (2), checkInTimezone (3)
+//
+// OLD rollup (mecheckin_101-1 at 118.175.0.247:23011) — dead/legacy:
+//   /stchain.rollapp.checkin.MsgCheckIn — from live mempool inspection 2026-06-10
+//   Fields: creator (1), slogan (2), recoverInterruption (3, bool)
+const NEW_CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
+const OLD_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
-// 3 fields from meta-earth proto tx.proto: checkInAddress (1), checkInMessage (2), checkInTimezone (3).
-function buildMsgCheckInType(): Type {
+function buildNewMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
     .add(new Field('checkInAddress',  1, 'string'))
@@ -85,7 +89,19 @@ function buildMsgCheckInType(): Type {
   root.add(T);
   return T;
 }
-const MsgCheckInType = buildMsgCheckInType();
+
+function buildOldMsgCheckInType(): Type {
+  const root = new Root();
+  const T = new Type('MsgCheckIn')
+    .add(new Field('creator',             1, 'string'))
+    .add(new Field('slogan',              2, 'string'))
+    .add(new Field('recoverInterruption', 3, 'bool'));
+  root.add(T);
+  return T;
+}
+
+const NewMsgCheckInType = buildNewMsgCheckInType();
+const OldMsgCheckInType = buildOldMsgCheckInType();
 
 // MsgNewRecord — hub chain wstaking module (Show E task, NOT daily check-in).
 // Fields confirmed from proto/metaearth/wstaking/record.proto and live tx inspection.
@@ -164,7 +180,9 @@ async function buildHubClient(wallet: StoredWallet): Promise<SigningStargateClie
 async function buildRollupClient(wallet: StoredWallet, rpc: string) {
   const signer = await buildSigner(wallet);
   const registry = new Registry([...defaultRegistryTypes]);
-  registry.register(CHECKIN_TYPE_URL, MsgCheckInType as any);
+  // Register both rollup check-in schemas — new and old rollup use different type URLs
+  registry.register(NEW_CHECKIN_TYPE_URL, NewMsgCheckInType as any);
+  registry.register(OLD_CHECKIN_TYPE_URL, OldMsgCheckInType as any);
   const { tmClient, client } = await withTimeout(CLIENT_TIMEOUT_MS, 'buildRollupClient', async () => {
     const tmClient = await Tendermint37Client.connect(rpc);
     const client   = await SigningStargateClient.createWithSigner(tmClient, signer, { registry });
@@ -231,8 +249,9 @@ async function signAndBroadcast(
   chainId: string,
   accountNumber: number,
   sequence: number,
+  fee: typeof NEW_ROLLUP_FEE,
 ): Promise<{ code: number; log: string; hash: string }> {
-  const signed = await client.sign(wallet.address, msgs, ROLLUP_FEE, memo, {
+  const signed = await client.sign(wallet.address, msgs, fee, memo, {
     accountNumber,
     sequence,
     chainId,
@@ -255,6 +274,7 @@ async function rollupBroadcastToChain(
   memo: string,
   rpc: string,
   chainId: string,
+  fee: typeof NEW_ROLLUP_FEE = NEW_ROLLUP_FEE,
 ): Promise<TxResult | null> {
   const { tmClient, client } = await buildRollupClient(wallet, rpc);
 
@@ -271,7 +291,7 @@ async function rollupBroadcastToChain(
     throw e;
   }
 
-  let result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, sequence);
+  let result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, sequence, fee);
 
   // Code 9 = fee payer doesn't exist — wallet not activated (caught via broadcastTxSync)
   if (result.code === 9 && result.log.includes('does not exist')) {
@@ -283,7 +303,7 @@ async function rollupBroadcastToChain(
     const expectedSeq = parseExpectedSequence(result.log);
     if (expectedSeq !== null && expectedSeq !== sequence) {
       console.log(`[blockchain] Sequence mismatch for ${wallet.label}: expected ${expectedSeq}, retrying...`);
-      result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, expectedSeq);
+      result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, expectedSeq, fee);
     }
   }
 
@@ -309,13 +329,13 @@ async function rollupBroadcast(
     }
 
     if (newChainId) {
-      const newResult = await rollupBroadcastToChain(wallet, msgs, memo, NEW_ROLLUP_RPC, newChainId);
+      const newResult = await rollupBroadcastToChain(wallet, msgs, memo, NEW_ROLLUP_RPC, newChainId, NEW_ROLLUP_FEE);
       if (newResult !== null) return newResult;
       console.log(`[blockchain] ${wallet.label}: wallet not on new rollup (${newChainId}), falling back to old rollup.`);
       console.log(`[blockchain]   ⚠️  Activate wallet: get testnet tokens at https://www.mec.me/en-US/faucet`);
     }
 
-    const oldResult = await rollupBroadcastToChain(wallet, msgs, memo, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN);
+    const oldResult = await rollupBroadcastToChain(wallet, msgs, memo, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, OLD_ROLLUP_FEE);
     if (oldResult === null) {
       return { success: false, error: 'Wallet not found on either rollup chain. Get testnet tokens at https://www.mec.me/en-US/faucet' };
     }
@@ -502,22 +522,58 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
-// ─── Daily check-in: MsgCheckIn on rollup ────────────────────────────────────
-// Confirmed by Meta Earth technical team (2026-06-13):
-//   Type URL: /mechain.checkin.MsgCheckIn  (from meta-earth proto mechain/checkin/tx.proto)
-//   Fields: checkInAddress (1), checkInMessage (2), checkInTimezone (3).
-// Chain ID is fetched dynamically from the rollup RPC /status at broadcast time.
-// New wallets need testnet tokens from https://www.mec.me/en-US/faucet first.
+// ─── Daily check-in ───────────────────────────────────────────────────────────
+// Two chains, two message schemas:
+//   NEW rollup → /mechain.checkin.MsgCheckIn  (checkInAddress/checkInMessage/checkInTimezone)
+//   OLD rollup → /stchain.rollapp.checkin.MsgCheckIn (creator/slogan/recoverInterruption)
+// Chain ID is fetched dynamically from /status at broadcast time.
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
-  const msg = {
-    typeUrl: CHECKIN_TYPE_URL,
-    value: MsgCheckInType.fromObject({
+  const checkInMessage  = process.env.CHECK_IN_MESSAGE  ?? 'META EARTH! ME, My Way!';
+  const checkInTimezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
+
+  const newMsg = {
+    typeUrl: NEW_CHECKIN_TYPE_URL,
+    value: NewMsgCheckInType.fromObject({
       checkInAddress:  wallet.address,
-      checkInMessage:  process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
-      checkInTimezone: process.env.CHECK_IN_TIMEZONE ?? 'UTC',
+      checkInMessage,
+      checkInTimezone,
     }),
   };
-  return rollupBroadcast(wallet, [msg], '', network);
+
+  const oldMsg = {
+    typeUrl: OLD_CHECKIN_TYPE_URL,
+    value: OldMsgCheckInType.fromObject({
+      creator:             wallet.address,
+      slogan:              checkInMessage,
+      recoverInterruption: false,
+    }),
+  };
+
+  try {
+    // Try NEW rollup first with new message schema
+    let newChainId: string | null = null;
+    try {
+      newChainId = await fetchRollupChainId(NEW_ROLLUP_RPC);
+    } catch {
+      console.log(`[blockchain] ${wallet.label}: NEW rollup unreachable, falling back to old rollup.`);
+    }
+
+    if (newChainId) {
+      const newResult = await rollupBroadcastToChain(wallet, [newMsg], '', NEW_ROLLUP_RPC, newChainId, NEW_ROLLUP_FEE);
+      if (newResult !== null) return newResult;
+      console.log(`[blockchain] ${wallet.label}: wallet not on new rollup (${newChainId}), falling back to old rollup.`);
+      console.log(`[blockchain]   ⚠️  Get testnet tokens at https://www.mec.me/en-US/faucet`);
+    }
+
+    // Fall back to OLD rollup with old message schema + fee
+    const oldResult = await rollupBroadcastToChain(wallet, [oldMsg], '', OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, OLD_ROLLUP_FEE);
+    if (oldResult === null) {
+      return { success: false, error: 'Wallet not found on either rollup. Get testnet tokens at https://www.mec.me/en-US/faucet' };
+    }
+    return oldResult;
+  } catch (err: any) {
+    return { success: false, error: err?.message ?? String(err) };
+  }
 }
 
 export async function hubSend(

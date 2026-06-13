@@ -13,7 +13,8 @@ Daily check-in: **`/mechain.checkin.MsgCheckIn`** with **3 fields** on the offic
 - In protobufjs (camelCase): `checkInAddress`, `checkInMessage`, `checkInTimezone`
 - Example: `checkInAddress=me1...`, `checkInMessage="META EARTH! ME, My Way!"`, `checkInTimezone="UTC"`
 - CLI example from repo: `check-in 'ME, My Way!' 'Asia/Shanghai'`
-- Fee: `{ amount: [], gas: '500000' }` (zero fee — rollup has no min gas price)
+- NEW rollup fee: `{ amount: [], gas: '500000' }` (no min gas price)
+- OLD rollup fee: `{ amount: [{ denom: 'umec', amount: '500' }], gas: '500000' }` (min-gas-price 0.001umec enforced at CheckTx)
 - Chain ID: dynamically fetched from `/status` at broadcast time — team says `mecheckin_400-1` but live RPC at `118.175.0.249:46657` reports `mecheckin_401-1`; fetching dynamically handles both
 
 **Why the previous entries were wrong:**
@@ -25,7 +26,8 @@ Daily check-in: **`/mechain.checkin.MsgCheckIn`** with **3 fields** on the offic
 - typeUrl: `/mechain.checkin.MsgCheckIn`
 - protobufjs fields: `checkInAddress` (1, string), `checkInMessage` (2, string), `checkInTimezone` (3, string)
 - message object: `{ checkInAddress: wallet.address, checkInMessage: '...', checkInTimezone: 'UTC' }`
-- fee: `{ amount: [], gas: '500000' }`
+- fee (new rollup): `NEW_ROLLUP_FEE = { amount: [], gas: '500000' }`
+- fee (old rollup): `OLD_ROLLUP_FEE = { amount: [{ denom: 'umec', amount: '500' }], gas: '500000' }`
 - chain ID: fetch from `GET <rpc>/status` → `result.node_info.network` before signing
 - RPC: `http://118.175.0.249:46657` (primary, from meta-earth-js-sdk config)
 - Fallback: old rollup `mecheckin_101-1` at `http://118.175.0.247:23011`
