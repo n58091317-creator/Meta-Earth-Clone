@@ -1,37 +1,40 @@
 ---
 name: Rollup MsgCheckIn — correct type URL and fields
-description: Correct check-in proto confirmed by Meta Earth team. /mechain.checkin.MsgCheckIn with checkInAddress/checkInMessage/checkInTimezone on the rollup.
+description: Correct check-in proto for both rollups. /stchain.rollapp.checkin.MsgCheckIn with creator/slogan/recoverInterruption — confirmed by live broadcast test 2026-06-13.
 ---
 
 ## Rule
-Daily check-in: **`/mechain.checkin.MsgCheckIn`** with **3 fields** on the official check-in rollup, broadcast via `broadcastTxSync`.
+Daily check-in: **`/stchain.rollapp.checkin.MsgCheckIn`** with **3 fields** on BOTH rollups, broadcast via `broadcastTxSync`.
 
-**Confirmed by Meta Earth technical team (2026-06-13):**
-- Type URL: `/mechain.checkin.MsgCheckIn`
-- Proto source: `repos/meta-earth/proto/mechain/checkin/tx.proto` (package `mechain.checkin`)
-- 3 fields: `check_in_address` (1), `check_in_message` (2), `check_in_timezone` (3)
-- In protobufjs (camelCase): `checkInAddress`, `checkInMessage`, `checkInTimezone`
-- Example: `checkInAddress=me1...`, `checkInMessage="META EARTH! ME, My Way!"`, `checkInTimezone="UTC"`
-- CLI example from repo: `check-in 'ME, My Way!' 'Asia/Shanghai'`
-- NEW rollup fee: `{ amount: [], gas: '500000' }` (no min gas price)
-- OLD rollup fee: `{ amount: [{ denom: 'umec', amount: '500' }], gas: '500000' }` (min-gas-price 0.001umec enforced at CheckTx)
-- Chain ID: dynamically fetched from `/status` at broadcast time — team says `mecheckin_400-1` but live RPC at `118.175.0.249:46657` reports `mecheckin_401-1`; fetching dynamically handles both
+**Confirmed by live broadcast test 2026-06-13:**
+- NEW rollup (`mecheckin_401-1` at `118.175.0.249:46657`): accepts `/stchain.rollapp.checkin.MsgCheckIn` (code 9 = account not found, type IS registered). Returns code 2 for `/mechain.checkin.MsgCheckIn` (type NOT registered).
+- OLD rollup (`mecheckin_101-1` at `118.175.0.247:23011`): also uses `/stchain.rollapp.checkin.MsgCheckIn`
 
-**Why the previous entries were wrong:**
-- `/stchain.rollapp.checkin.MsgCheckIn` with `creator/slogan/recoverInterruption` was decoded from old mempool txs (2026-06-10 and 2026-06-13) — those txs were from a different/older bot or a non-official rollup instance
-- The official Meta Earth team explicitly confirmed `/mechain.checkin.MsgCheckIn` is the correct module
-- The hub repo `meta-earth` has the authoritative proto at `proto/mechain/checkin/tx.proto`
+**Fields:**
+- `creator` (1, string) — wallet address
+- `slogan` (2, string) — check-in message e.g. `"META EARTH! ME, My Way!"`
+- `recoverInterruption` (3, bool) — always `false`
+
+**Why `/mechain.checkin.MsgCheckIn` is WRONG (despite team saying otherwise):**
+- The Meta Earth technical team (2026-06-13) said `/mechain.checkin.MsgCheckIn` is correct
+- BUT live broadcast to the actual new rollup returns code 2 (unable to resolve type URL)
+- The live new rollup DOES accept `/stchain.rollapp.checkin.MsgCheckIn` (code 9 = type known, account missing)
+- Trust the live chain over the team's statement
 
 **How to apply:**
-- typeUrl: `/mechain.checkin.MsgCheckIn`
-- protobufjs fields: `checkInAddress` (1, string), `checkInMessage` (2, string), `checkInTimezone` (3, string)
-- message object: `{ checkInAddress: wallet.address, checkInMessage: '...', checkInTimezone: 'UTC' }`
+- typeUrl: `/stchain.rollapp.checkin.MsgCheckIn`
+- protobufjs fields: `creator` (1, string), `slogan` (2, string), `recoverInterruption` (3, bool)
+- message object: `{ creator: wallet.address, slogan: '...', recoverInterruption: false }`
 - fee (new rollup): `NEW_ROLLUP_FEE = { amount: [], gas: '500000' }`
 - fee (old rollup): `OLD_ROLLUP_FEE = { amount: [{ denom: 'umec', amount: '500' }], gas: '500000' }`
 - chain ID: fetch from `GET <rpc>/status` → `result.node_info.network` before signing
-- RPC: `http://118.175.0.249:46657` (primary, from meta-earth-js-sdk config)
+- RPC: `http://118.175.0.249:46657` (primary)
 - Fallback: old rollup `mecheckin_101-1` at `http://118.175.0.247:23011`
-- New wallets need testnet tokens from faucet: `https://www.mec.me/en-US/faucet`
+- New wallets need account on new rollup first — fund via faucet: `https://www.mec.me/en-US/faucet`
+
+**Old rollup fee situation:**
+- Old rollup enforces min-gas-price 0.001umec → requires 500 umec fee
+- Code 13 = insufficient fees, code 9 = account not found
+- Only wallets WITH umec on old rollup can check in there
 
 **Explorer:** `https://www.explorer-testnet.me/zh-TW/home`
-**Developer docs:** `https://docs.mec.me/docs/development-guides/developer-guide`

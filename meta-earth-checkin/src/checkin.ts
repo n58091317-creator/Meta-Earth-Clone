@@ -22,33 +22,18 @@ const OLD_ROLLUP_CHAIN  = 'mecheckin_101-1';
 const ADDRESS_PREFIX = 'me';
 
 // ── Check-in proto types ────────────────────────────────────────────────────────
-// Two different rollup chains use different MsgCheckIn schemas:
-//
-// NEW rollup (mecheckin_400-1 / 401-1 at 118.175.0.249:46657):
-//   /mechain.checkin.MsgCheckIn — confirmed by Meta Earth team 2026-06-13
-//   Source: repos/meta-earth/proto/mechain/checkin/tx.proto
-//   Fields: checkInAddress (1), checkInMessage (2), checkInTimezone (3)
-//
-// OLD rollup (mecheckin_101-1 at 118.175.0.247:23011) — dead/legacy:
-//   /stchain.rollapp.checkin.MsgCheckIn — from live mempool inspection 2026-06-10
+// BOTH rollups (new mecheckin_401-1 and old mecheckin_101-1) use:
+//   /stchain.rollapp.checkin.MsgCheckIn
 //   Fields: creator (1), slogan (2), recoverInterruption (3, bool)
+// NOTE: /mechain.checkin.MsgCheckIn returns code 2 (unknown type) on the live
+//       new rollup — confirmed by direct broadcast test 2026-06-13.
 //
 // DO NOT use /metaearth.wstaking.MsgNewRecord (Show E — completely different task).
 
-const NEW_CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
+const NEW_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 const OLD_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
-function buildNewMsgCheckInType(): Type {
-  const root = new Root();
-  const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress', 1, 'string'))
-    .add(new Field('checkInMessage', 2, 'string'))
-    .add(new Field('checkInTimezone', 3, 'string'));
-  root.add(T);
-  return T;
-}
-
-function buildOldMsgCheckInType(): Type {
+function buildMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
     .add(new Field('creator', 1, 'string'))
@@ -58,8 +43,8 @@ function buildOldMsgCheckInType(): Type {
   return T;
 }
 
-const NewMsgCheckInType = buildNewMsgCheckInType();
-const OldMsgCheckInType = buildOldMsgCheckInType();
+const NewMsgCheckInType = buildMsgCheckInType();
+const OldMsgCheckInType = buildMsgCheckInType();
 
 /** Fetch the actual chain ID from an RPC endpoint's /status. */
 async function fetchChainId(rpc: string): Promise<string> {
@@ -197,11 +182,11 @@ export async function performCheckin(
   log(`  message  : ${message}`);
   log(`  timezone : ${timezone}`);
 
-  const newMsgValue = { checkInAddress: wallet.address, checkInMessage: message, checkInTimezone: timezone };
+  const newMsgValue = { creator: wallet.address, slogan: message, recoverInterruption: false };
   const oldMsgValue = { creator: wallet.address, slogan: message, recoverInterruption: false };
 
   try {
-    // ── Step 1: Try NEW rollup with /mechain.checkin.MsgCheckIn ───────────────
+    // ── Step 1: Try NEW rollup with /stchain.rollapp.checkin.MsgCheckIn ─────────
     let newRollupChain: string;
     try {
       newRollupChain = await fetchChainId(NEW_ROLLUP_RPC);
