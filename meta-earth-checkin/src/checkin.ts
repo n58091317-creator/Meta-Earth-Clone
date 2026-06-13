@@ -15,10 +15,16 @@ import { WalletInfo } from './wallet';
 //   Uses /stchain.rollapp.checkin.MsgCheckIn (confirmed by live testing 2026-06-13).
 //   /mechain.checkin.MsgCheckIn is in the GitHub proto but NOT deployed on chain (code 2).
 // OLD rollup mecheckin_101-1 at 118.175.0.247:23011 — dead since 2026-05-01. Fallback only.
+// NEW hub mechain_400-1 at 118.175.0.249:26657 — has IBC channel-1 → new rollup channel-0.
+//   Wallet faucet/genesis tokens live here. IBC-bridge creates rollup account automatically.
 // JS SDK config: repos/meta-earth-js-sdk/src/config/define.ts
 const NEW_ROLLUP_RPC   = 'http://118.175.0.249:46657';
 const OLD_ROLLUP_RPC   = 'http://118.175.0.247:23011';
 const OLD_ROLLUP_CHAIN = 'mecheckin_101-1';
+const NEW_HUB_RPC      = 'http://118.175.0.249:26657';
+const NEW_HUB_REST     = 'http://118.175.0.249:1317';
+const IBC_HUB_CHANNEL  = 'channel-1';   // new hub channel-1 → new rollup channel-0 (STATE_OPEN)
+const IBC_BRIDGE_UMEC  = 10_000;         // tiny bridge amount — just enough to create rollup account
 const ADDRESS_PREFIX   = 'me';
 
 // Both rollups use the same type URL and fields.
@@ -108,6 +114,57 @@ async function fetchChainId(rpc: string): Promise<string> {
   if (!res.ok) throw new Error(`/status HTTP ${res.status}`);
   const data = await res.json() as any;
   return data?.result?.node_info?.network as string;
+}
+
+// ── Auto IBC bridge: hub → rollup (creates rollup account when missing) ───────
+// A wallet needs an account on the new rollup before it can check in.
+// If hub (mechain_400-1) has umec, bridge a tiny amount via IBC channel-1 to
+// create the rollup account automatically, then retry check-in.
+async function autoIbcBridgeToRollup(wallet: WalletInfo): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${NEW_HUB_REST}/cosmos/bank/v1beta1/balances/${wallet.address}`,
+      { signal: AbortSignal.timeout(8000) },
+    );
+    const json = await res.json() as any;
+    const umec = (json.balances ?? []).find((b: any) => b.denom === 'umec');
+    const hubBalance = umec ? parseInt(umec.amount, 10) : 0;
+
+    const needed = IBC_BRIDGE_UMEC + 10_000; // bridge + hub tx fee (10000 umec)
+    if (hubBalance < needed) {
+      log(`${wallet.label}: new hub balance ${hubBalance} umec (need ${needed} for IBC bridge)`);
+      return false;
+    }
+
+    log(`${wallet.label}: hub has ${hubBalance} umec — bridging ${IBC_BRIDGE_UMEC} umec to rollup via IBC…`);
+    const signer  = await buildSigner(wallet);
+    const client  = await SigningStargateClient.connectWithSigner(NEW_HUB_RPC, signer, { registry: buildRegistry() });
+    const timeout = BigInt(Date.now() + 10 * 60_000) * 1_000_000n;
+    const hubFee  = { amount: [{ denom: 'umec', amount: '10000' }], gas: '500000' };
+
+    const result = await (client as any).sendIbcTokens(
+      wallet.address,
+      wallet.address,
+      { denom: 'umec', amount: String(IBC_BRIDGE_UMEC) },
+      'transfer',
+      IBC_HUB_CHANNEL,
+      undefined,
+      timeout,
+      hubFee,
+      'Auto-bridge to activate rollup account',
+    );
+
+    if (result.code !== 0) {
+      log(`${wallet.label}: IBC bridge failed (code ${result.code}): ${result.rawLog ?? ''}`);
+      return false;
+    }
+
+    log(`${wallet.label}: IBC bridge sent. TX: ${result.transactionHash}`);
+    return true;
+  } catch (e: any) {
+    log(`${wallet.label}: IBC bridge error: ${e?.message ?? e}`);
+    return false;
+  }
 }
 
 // ── NEW rollup path: signAndBroadcast (waits for actual block confirmation) ───
@@ -249,14 +306,26 @@ export async function performCheckin(
     }
 
     if (newChainId) {
-      const result = await checkinOnNewRollup(wallet, NEW_ROLLUP_RPC, newChainId, slogan);
+      let result = await checkinOnNewRollup(wallet, NEW_ROLLUP_RPC, newChainId, slogan);
+
+      // No rollup account — try auto-IBC bridge from new hub, then retry once
+      if (result === null) {
+        log(`  ${wallet.label}: no rollup account. Attempting IBC bridge from hub…`);
+        const bridged = await autoIbcBridgeToRollup(wallet);
+        if (bridged) {
+          log(`  Waiting 30s for IBC packet to arrive on rollup…`);
+          await new Promise(r => setTimeout(r, 30_000));
+          result = await checkinOnNewRollup(wallet, NEW_ROLLUP_RPC, newChainId, slogan);
+        }
+      }
+
       if (result !== null) {
         if (result.success) {
           log(`${wallet.label} ✓ check-in CONFIRMED on ${newChainId}. TX: ${result.txHash}`);
         }
         return result;
       }
-      log(`  ${wallet.label} not on new rollup. Falling back to old rollup.`);
+      log(`  ${wallet.label}: still no rollup account after bridge attempt. Falling back to old rollup.`);
     }
 
     // ── Step 2: Old rollup fallback — broadcastTxSync (dead chain, CheckTx only) ──

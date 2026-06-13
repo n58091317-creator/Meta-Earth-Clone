@@ -38,7 +38,8 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 - Bot uses `@cosmjs/stargate` + `@cosmjs/proto-signing` + `@cosmjs/tendermint-rpc` directly.
 - `protobufjs` overridden to `^7.4.0` in `pnpm-workspace.yaml` — version 6.x blocked by Replit security policy.
 - **Old hub** `me-chain` at `118.175.0.247:16657`: has `wstaking` module with `MsgNewRecord` — this is the **Show E task** module, **NOT daily check-in**. Our wallet has 2000 umec here (seq 50). NOT connected to new rollup via IBC.
-- **New hub** `mechain_400-1` at `118.175.0.249:26657`: ~80 genesis accounts each with 200000000 umec. IBC channel-1 → new rollup channel-0. Our wallet NOT in genesis.
+- **New hub** `mechain_400-1` at `118.175.0.249:26657`, REST `1317`: IBC channel-1 (STATE_OPEN) → new rollup channel-0. Faucet sends umec here. Confirmed 2026-06-13: wallet `me1wn7kk6dek49fmm6ujcytafjwgcu6txmehqqfv0` has 200M umec on new hub. IBC bridge from new hub creates rollup account automatically (even 10000 umec is enough since new rollup fee=0).
+- **IBC bridge must use NEW hub** (`118.175.0.249:26657`) not old hub — old hub has NO open channel to the new rollup. `ibcTransferToRollup()` in `blockchain.ts` now correctly uses `NEW_HUB_RPC`. `checkin.ts` auto-bridges via `autoIbcBridgeToRollup()` when wallet has no rollup account.
 
 ## Product
 

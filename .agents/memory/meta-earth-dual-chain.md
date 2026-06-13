@@ -26,11 +26,15 @@ Bot must try the NEW rollup first, fall back to OLD rollup if wallet not activat
 - Old rollup bot addresses (me1xp80f...) are NOT present on new chains
 
 ## Wallet activation
-Our wallet (`me1zjf6fqzyvlk4ta4awnezzyd9jawpuq4en4l6jc`) is NOT in the new genesis.
-- Cannot submit txs to new rollup (code-9 from DeductFeeDecorator, even with empty fee)
-- To activate: need MEC on new hub → IBC transfer to new rollup → account gets created
-- New hub genesis accounts have 200000000 umec each; our wallet has 0 on new hub
-- Use Meta Earth app to get MEC on new hub (no automated path exists for external wallets)
+Wallets NOT in new hub genesis can get tokens via faucet at https://www.mec.me/en-US/faucet.
+The faucet sends umec to the **new hub (mechain_400-1)**, NOT to the rollup directly.
+- Confirmed 2026-06-13: wallet `me1wn7kk6dek49fmm6ujcytafjwgcu6txmehqqfv0` has 200M umec on new hub.
+- To activate on rollup: IBC transfer from new hub channel-1 → new rollup channel-0 creates the rollup account.
+- Even a tiny IBC transfer (10000 umec) is sufficient — check-in fee on new rollup is 0 (empty fee array).
+- Both `checkin.ts` (bot) and `blockchain.ts` (dashboard) now auto-bridge when wallet has no rollup account.
+
+## Critical IBC bug (fixed 2026-06-13)
+`ibcTransferToRollup()` was using `HUB_RPC` (old hub at 118.175.0.247:16657) which has NO open channel to the new rollup. It MUST use `NEW_HUB_RPC` (118.175.0.249:26657). The old hub and new hub are COMPLETELY SEPARATE chains.
 
 ## Fee structure on new rollup
 Real check-in txs on mecheckin_401-1 use empty fee array `[]` + gas `500000`.

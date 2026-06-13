@@ -9,8 +9,12 @@ import { Tendermint37Client } from '@cosmjs/tendermint-rpc';
 import _m0 from 'protobufjs/minimal';
 import { StoredWallet } from './store';
 
-const HUB_RPC  = 'http://118.175.0.247:16657';
+const HUB_RPC  = 'http://118.175.0.247:16657';   // OLD hub (me-chain) — wstaking / Show E
 const HUB_REST = 'http://118.175.0.247:11317';
+// NEW hub (mechain_400-1) — IBC channel-1 → new rollup channel-0 (STATE_OPEN)
+// Confirmed: wallet balance lives here (200M umec genesis or faucet).
+const NEW_HUB_RPC  = 'http://118.175.0.249:26657';
+const NEW_HUB_REST = 'http://118.175.0.249:1317';
 
 // ── Rollup chain config ─────────────────────────────────────────────────────
 // Official check-in rollup: mecheckin_400-1 (confirmed by Meta Earth team 2026-06-13).
@@ -259,6 +263,15 @@ async function buildHubClient(wallet: StoredWallet): Promise<SigningStargateClie
   registry.register(WSTAKING_UNSTAKE_URL,    MsgWstakingUnstakeType as any);
   return withTimeout(CLIENT_TIMEOUT_MS, 'buildHubClient',
     () => SigningStargateClient.connectWithSigner(HUB_RPC, signer, { registry })
+  );
+}
+
+/** Client for the NEW hub (mechain_400-1) — used for IBC transfers to the new rollup. */
+async function buildNewHubClient(wallet: StoredWallet): Promise<SigningStargateClient> {
+  const signer = await buildSigner(wallet);
+  const registry = new Registry([...defaultRegistryTypes]);
+  return withTimeout(CLIENT_TIMEOUT_MS, 'buildNewHubClient',
+    () => SigningStargateClient.connectWithSigner(NEW_HUB_RPC, signer, { registry })
   );
 }
 
@@ -825,7 +838,9 @@ export async function ibcTransferToRollup(
   amountUmec: number
 ): Promise<TxResult> {
   try {
-    const client = await buildHubClient(masterWallet);
+    // Must use NEW hub client — IBC channel-1 (new hub) → channel-0 (new rollup) is STATE_OPEN.
+    // Old hub has no open channel to the new rollup.
+    const client = await buildNewHubClient(masterWallet);
     const timeoutTimestamp = BigInt(Date.now() + 10 * 60_000) * 1_000_000n;
     const result = await (client as any).sendIbcTokens(
       masterWallet.address,
@@ -844,6 +859,18 @@ export async function ibcTransferToRollup(
     return { success: true, txHash: result.transactionHash };
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
+  }
+}
+
+/** Balance on the NEW hub (mechain_400-1) — this is where the IBC bridge originates. */
+export async function getNewHubBalance(address: string): Promise<number> {
+  try {
+    const res = await fetchWithTimeout(`${NEW_HUB_REST}/cosmos/bank/v1beta1/balances/${address}?pagination.limit=20`);
+    const json = (await res.json()) as any;
+    const coin = (json.balances ?? []).find((b: any) => b.denom === 'umec');
+    return coin ? parseInt(coin.amount, 10) : 0;
+  } catch {
+    return 0;
   }
 }
 
