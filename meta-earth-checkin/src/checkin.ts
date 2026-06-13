@@ -25,17 +25,19 @@ const OLD_ROLLUP_CHAIN  = 'mecheckin_101-1';
 const ADDRESS_PREFIX = 'me';
 
 // ── Check-in type ──────────────────────────────────────────────────────────────
-// Confirmed from live rollup mempool inspection (2026-06-10):
-//   ALL real bots use /stchain.rollapp.checkin.MsgCheckIn with 2 fields.
-// DO NOT use /mechain.checkin.MsgCheckIn (3-field) or
-// /metaearth.wstaking.MsgNewRecord (Show E module — different task entirely).
+// Confirmed from live rollup REST inspection (2026-06-13):
+//   Real txs on mecheckin_401-1 use /stchain.rollapp.checkin.MsgCheckIn with 3 fields:
+//   creator (1, string), slogan (2, string), recover_interruption (3, bool).
+// NOTE: meta-earth hub has a DIFFERENT MsgCheckIn (checkInAddress/checkInMessage/checkInTimezone).
+// DO NOT use /metaearth.wstaking.MsgNewRecord (Show E module — different task entirely).
 const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
 function buildMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress', 1, 'string'))
-    .add(new Field('checkInMessage', 2, 'string'));
+    .add(new Field('creator', 1, 'string'))
+    .add(new Field('slogan', 2, 'string'))
+    .add(new Field('recoverInterruption', 3, 'bool'));
   root.add(T);
   return T;
 }
@@ -117,8 +119,9 @@ async function checkinOnChain(
   const msg = {
     typeUrl: CHECKIN_TYPE_URL,
     value: MsgCheckInType.fromObject({
-      checkInAddress: wallet.address,
-      checkInMessage: message,
+      creator:             wallet.address,
+      slogan:              message,
+      recoverInterruption: false,
     }),
   };
 

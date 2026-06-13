@@ -67,19 +67,21 @@ function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promis
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
-// Check-in type URL — confirmed from live rollup mempool inspection (2026-06-10).
-// Real bots in the mempool ALL use /stchain.rollapp.checkin.MsgCheckIn with 2 fields.
-// DO NOT use /mechain.checkin.MsgCheckIn (3-field, hub-only) or
-// /metaearth.wstaking.MsgNewRecord (Show E module — completely different task).
+// Check-in type URL — confirmed from live rollup REST inspection (2026-06-13).
+// Real txs on mecheckin_401-1 use /stchain.rollapp.checkin.MsgCheckIn with 3 fields:
+//   creator (1, string), slogan (2, string), recover_interruption (3, bool).
+// NOTE: meta-earth hub uses a different MsgCheckIn with checkInAddress/checkInMessage/checkInTimezone.
+// The ROLLUP uses creator/slogan/recover_interruption — confirmed from live tx REST decode.
 const CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
-// 2 fields only — confirmed from decoding real mempool txs on 2026-06-10.
-// NO timezone field. The meta-earth proto has a 3-field version but live txs omit it.
+// 3 fields — confirmed from decoding real txs on mecheckin_401-1 via REST (2026-06-13).
+// Standard Ignite scaffold layout: creator=1, slogan=2, recover_interruption=3 (bool).
 function buildMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress', 1, 'string'))
-    .add(new Field('checkInMessage', 2, 'string'));
+    .add(new Field('creator', 1, 'string'))
+    .add(new Field('slogan', 2, 'string'))
+    .add(new Field('recoverInterruption', 3, 'bool'));
   root.add(T);
   return T;
 }
@@ -493,18 +495,19 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
-// ─── Daily check-in: MsgCheckIn on rollup via broadcastTxAsync ───────────────
-// Type URL and fields confirmed from live rollup mempool inspection (2026-06-10):
-//   ALL real bots use /stchain.rollapp.checkin.MsgCheckIn with 2 fields.
-// The rollup stopped producing blocks 2026-05-01 but its mempool still accepts txs.
-// The Meta Earth backend records check-ins from mempool acceptance.
-// broadcastTxAsync bypasses CheckTx (which enforces fees) — DeliverTx has no fee check.
+// ─── Daily check-in: MsgCheckIn on rollup via broadcastTxSync ───────────────
+// Type URL and fields confirmed from live rollup REST inspection (2026-06-13):
+//   /stchain.rollapp.checkin.MsgCheckIn  with 3 fields:
+//   creator (1, string), slogan (2, string), recover_interruption (3, bool).
+// New rollup mecheckin_401-1 is alive and processing blocks. Wallet must be
+// activated on new chain (have MEC on mechain_400-1) — falls back to old rollup otherwise.
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
   const msg = {
     typeUrl: CHECKIN_TYPE_URL,
     value: MsgCheckInType.fromObject({
-      checkInAddress: wallet.address,
-      checkInMessage: process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
+      creator:              wallet.address,
+      slogan:               process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!',
+      recoverInterruption:  false,
     }),
   };
   return rollupBroadcast(wallet, [msg], '', network);

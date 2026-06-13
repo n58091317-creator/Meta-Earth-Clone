@@ -26,8 +26,8 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 
 ## Architecture decisions
 
-- **Daily check-in is `/stchain.rollapp.checkin.MsgCheckIn`** on the rollup chain via `broadcastTxSync`. Confirmed from live rollup mempool inspection 2026-06-10 — ALL real bots use this exact type URL with 2 fields.
-- **MsgCheckIn fields** (2 only): `checkInAddress` (1, wallet address), `checkInMessage` (2, e.g. `"META EARTH! ME, My Way!"`). NO timezone field.
+- **Daily check-in is `/stchain.rollapp.checkin.MsgCheckIn`** on the rollup chain via `broadcastTxSync`. Confirmed from live rollup REST decode 2026-06-13.
+- **MsgCheckIn fields** (3 fields): `creator` (1, wallet address), `slogan` (2, e.g. `"META EARTH! ME, My Way!"`), `recoverInterruption` (3, bool, always `false`). Standard Ignite scaffold layout.
 - **Dual-chain strategy** (implemented 2026-06-12): Meta Earth runs TWO separate ecosystems. Bot tries new rollup first, falls back to old rollup automatically.
   - **NEW rollup** `mecheckin_401-1` at `118.175.0.249:46657` — alive, producing real blocks. Paired with new hub `mechain_400-1` at `118.175.0.249:26657`. Has ~80 genesis accounts only. IBC denom on rollup = `ibc/BC7F4D...` (umec via `transfer/channel-0`).
   - **OLD rollup** `mecheckin_101-1` at `118.175.0.247:23011` — dead (no blocks since 2026-05-01), mempool permanently full at 5000 txs. Still accepts new txs (code=0). Used as fallback.
@@ -50,7 +50,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-- **Correct rollup check-in type URL is `/stchain.rollapp.checkin.MsgCheckIn`** with **2 fields**: `checkInAddress` (1), `checkInMessage` (2). NO timezone. Confirmed from live rollup mempool inspection 2026-06-10 — all real bots use this exact format.
+- **Correct rollup check-in type URL is `/stchain.rollapp.checkin.MsgCheckIn`** with **3 fields**: `creator` (1, address), `slogan` (2, message text), `recoverInterruption` (3, bool false). Confirmed from live rollup REST tx decode 2026-06-13.
 - **DO NOT use `/metaearth.wstaking.MsgNewRecord` for check-in** — that is the "Show E" task module on the hub chain. Sending `MsgNewRecord` triggers "Show E" in the Meta Earth app, not "Daily Sign-in".
 - **DO NOT use `/mechain.checkin.MsgCheckIn`** (3-field proto from meta-earth repo) — the hub has no compiled `checkin` module; the rollup is dead and this type is not processed.
 - **Use `broadcastTxSync` for rollup txs** — the node's min gas price is 0, so fee=0 txs pass CheckTx fine. Sync gives us the real CheckTx result (error code + log) instead of silently dropping the tx.

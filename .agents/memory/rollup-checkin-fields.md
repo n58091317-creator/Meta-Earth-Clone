@@ -1,26 +1,27 @@
 ---
 name: Rollup MsgCheckIn — correct type URL and fields
-description: The correct daily check-in uses /stchain.rollapp.checkin.MsgCheckIn with 2 fields on the rollup via broadcastTxAsync. Confirmed from live mempool inspection.
+description: The correct daily check-in proto for the NEW rollup (mecheckin_401-1). Fields are creator/slogan/recoverInterruption — NOT checkInAddress/checkInMessage.
 ---
 
 ## Rule
-Daily check-in: **`/stchain.rollapp.checkin.MsgCheckIn`** with **2 fields only** on rollup chain (`mecheckin_101-1`), broadcast via `broadcastTxAsync`.
+Daily check-in: **`/stchain.rollapp.checkin.MsgCheckIn`** with **3 fields** on rollup chain, broadcast via `broadcastTxSync`.
 
-**Confirmed from live rollup mempool inspection (2026-06-10):**
-- Decoded 5 real bot transactions sitting in the mempool
-- ALL use type URL `/stchain.rollapp.checkin.MsgCheckIn`
-- ALL have exactly 2 fields: `checkInAddress` (1) + `checkInMessage` (2)
-- NO timezone field
-- Fee: zero / IBC MEC amount "0"
+**Confirmed from live rollup REST tx decode (2026-06-13):**
+- Decoded real transactions via `GET /cosmos/tx/v1beta1/txs?events=message.action=...`
+- Real tx JSON: `{ "@type": "/stchain.rollapp.checkin.MsgCheckIn", "creator": "me1...", "slogan": "META EARTH! ME, My Way!", "recover_interruption": false }`
+- 3 fields in standard Ignite scaffold order: `creator` (1), `slogan` (2), `recover_interruption` (3, bool)
+- Fee: empty amount array `[]`, gas `500000`
 
-**Why:**
-- The 3-field `/mechain.checkin.MsgCheckIn` type from `repos/meta-earth/proto/mechain/checkin/tx.proto` is NOT what real clients send. Live mempool shows the 2-field `/stchain.rollapp.checkin.MsgCheckIn`.
-- The rollup stopped producing blocks 2026-05-01 but mempool still accepts txs. The Meta Earth backend records check-ins from mempool acceptance (broadcastTxAsync result is sufficient).
-- `/metaearth.wstaking.MsgNewRecord` is the Show E module — completely different task, wrong for check-in.
+**Why the old 2-field version was wrong:**
+- The previous memory entry (from 2026-06-10 mempool inspection) identified fields as `checkInAddress` + `checkInMessage` — this was incorrect
+- The old rollup (`mecheckin_101-1`) was dead and its mempool txs may have been from older bot versions
+- The NEW active rollup (`mecheckin_401-1`, alive as of 2026-06-13 at block 2,275,335) uses the Ignite-scaffolded 3-field format
+- The meta-earth hub repo proto (`/mechain.checkin.MsgCheckIn`) uses `checkInAddress/checkInMessage/checkInTimezone` — this is the HUB type, NOT the rollup type
 
 **How to apply:**
 - typeUrl: `/stchain.rollapp.checkin.MsgCheckIn`
-- fields: `checkInAddress` (wallet address), `checkInMessage` (e.g. "META EARTH! ME, My Way!")
-- fee: `{ amount: [], gas: '200000' }` (zero fee)
-- broadcast: `Tendermint37Client.broadcastTxAsync` (not signAndBroadcast)
-- chain: rollup RPC `http://118.175.0.247:23011`, chain ID `mecheckin_101-1`
+- protobufjs fields: `creator` (1, string), `slogan` (2, string), `recoverInterruption` (3, bool)
+- message object: `{ creator: wallet.address, slogan: 'META EARTH! ME, My Way!', recoverInterruption: false }`
+- fee: `{ amount: [], gas: '500000' }`
+- broadcast: `broadcastTxSync` (gives real CheckTx code)
+- chain: try NEW rollup first (`mecheckin_401-1` at `118.175.0.249:46657`), fall back to OLD (`mecheckin_101-1` at `118.175.0.247:23011`)
