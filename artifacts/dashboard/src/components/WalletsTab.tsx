@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
-import { readFirestoreCredentials } from '../firebase';
 import { useApp } from '../App';
 
 const UMEC_PER_MEC = 100_000_000;
@@ -223,17 +222,11 @@ export function WalletsTab() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      // Read directly from Firestore in the browser — avoids server timeouts
-      const credentials = await readFirestoreCredentials();
-      if (credentials.length === 0) {
-        setSyncResult({ imported: 0, skipped: 0, errors: ['No mnemonic phrases or private keys found in Firebase database'] });
-        return;
-      }
-      const r = await api.importWallets(credentials.join('\n'));
+      const r = await api.syncFirestore();
       setSyncResult(r);
       if (r.imported > 0) await loadWallets();
     } catch (e: any) {
-      setError('Firebase sync failed: ' + (e.message ?? String(e)));
+      setError('Firestore sync failed: ' + (e.message ?? String(e)));
     } finally {
       setSyncing(false);
     }

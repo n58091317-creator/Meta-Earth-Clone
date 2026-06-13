@@ -182,4 +182,9 @@ export const api = {
     request<{ imported: number; skipped: number; errors: string[] }>(
       '/api/sync-firebase', { method: 'POST' }
     ),
+
+  syncFirestore: () =>
+    request<{ imported: number; skipped: number; errors: string[]; note?: string }>(
+      '/api/sync-firestore', { method: 'POST' }
+    ),
 };
