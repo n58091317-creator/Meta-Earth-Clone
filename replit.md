@@ -26,8 +26,8 @@ A daily check-in automation bot for the Meta Earth blockchain, plus all openmeta
 
 ## Architecture decisions
 
-- **Daily check-in is `/stchain.rollapp.checkin.MsgCheckIn`** on the rollup chain via `broadcastTxSync`. Confirmed by live broadcast test 2026-06-13 (the team said `/mechain.checkin.MsgCheckIn` but that returns code 2 on the live new rollup).
-- **MsgCheckIn fields** (3 fields): `creator` (1, wallet address), `slogan` (2, e.g. `"META EARTH! ME, My Way!"`), `recoverInterruption` (3, bool, always `false`). Same schema on both rollups.
+- **Daily check-in NEW rollup: `/mechain.checkin.MsgCheckIn`** — confirmed from `repos/meta-earth/proto/mechain/checkin/tx.proto`. Fields: `checkInAddress` (1, wallet address), `checkInMessage` (2, message text), `checkInTimezone` (3, timezone e.g. `"UTC"`).
+- **Daily check-in OLD rollup (fallback): `/stchain.rollapp.checkin.MsgCheckIn`** — Fields: `creator` (1), `slogan` (2), `recoverInterruption` (3, bool). Used only as fallback when wallet not on new rollup.
 - **Chain ID is fetched dynamically** from the rollup RPC `/status` endpoint at broadcast time. The rollup at `118.175.0.249:46657` currently reports `mecheckin_401-1` but the official chain ID confirmed by the team is `mecheckin_400-1`. Dynamic fetch ensures the correct signing chain ID is always used.
 - **Dual-chain strategy**: Bot fetches chain ID from new rollup first, falls back to old rollup if wallet not activated.
   - **NEW rollup** at `118.175.0.249:46657` — alive, producing real blocks. Hub: `mechain_400-1` at `118.175.0.249:26657` (public: `https://beta-hub-26657.explorer-testnet.me`). New wallets must get testnet tokens from faucet: `https://www.mec.me/en-US/faucet`.

@@ -68,16 +68,25 @@ function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promis
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
 
-// ── MsgCheckIn schema — same on both rollups ─────────────────────────────────
-// BOTH rollups (new mecheckin_401-1 and old mecheckin_101-1) use:
-//   /stchain.rollapp.checkin.MsgCheckIn
-//   Fields: creator (1), slogan (2), recoverInterruption (3, bool)
-// NOTE: /mechain.checkin.MsgCheckIn returns code 2 (unknown type) on the live
-//       new rollup — confirmed by direct broadcast test 2026-06-13.
-const NEW_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
+// ── MsgCheckIn schema (from repos/meta-earth/proto/mechain/checkin/tx.proto) ──
+// NEW rollup uses /mechain.checkin.MsgCheckIn with 3 string fields:
+//   checkInAddress (1), checkInMessage (2), checkInTimezone (3)
+// OLD rollup (dead, mecheckin_101-1) uses /stchain.rollapp.checkin.MsgCheckIn:
+//   creator (1), slogan (2), recoverInterruption (3, bool)
+const NEW_CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
 const OLD_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
-function buildMsgCheckInType(): Type {
+function buildNewMsgCheckInType(): Type {
+  const root = new Root();
+  const T = new Type('MsgCheckIn')
+    .add(new Field('checkInAddress',  1, 'string'))
+    .add(new Field('checkInMessage',  2, 'string'))
+    .add(new Field('checkInTimezone', 3, 'string'));
+  root.add(T);
+  return T;
+}
+
+function buildOldMsgCheckInType(): Type {
   const root = new Root();
   const T = new Type('MsgCheckIn')
     .add(new Field('creator',             1, 'string'))
@@ -87,8 +96,8 @@ function buildMsgCheckInType(): Type {
   return T;
 }
 
-const NewMsgCheckInType = buildMsgCheckInType();
-const OldMsgCheckInType = buildMsgCheckInType();
+const NewMsgCheckInType = buildNewMsgCheckInType();
+const OldMsgCheckInType = buildOldMsgCheckInType();
 
 // MsgNewRecord — hub chain wstaking module (Show E task, NOT daily check-in).
 // Fields confirmed from proto/metaearth/wstaking/record.proto and live tx inspection.
@@ -510,17 +519,19 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 // ─── Operations ───────────────────────────────────────────────────────────────
 
 // ─── Daily check-in ───────────────────────────────────────────────────────────
-// Both rollups use /stchain.rollapp.checkin.MsgCheckIn (creator/slogan/recoverInterruption).
-// Chain ID is fetched dynamically from /status at broadcast time.
+// NEW rollup: /mechain.checkin.MsgCheckIn — checkInAddress, checkInMessage, checkInTimezone
+// OLD rollup: /stchain.rollapp.checkin.MsgCheckIn — creator, slogan, recoverInterruption
+// Chain ID fetched dynamically from /status at broadcast time.
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
   const checkInMessage  = process.env.CHECK_IN_MESSAGE  ?? 'META EARTH! ME, My Way!';
+  const checkInTimezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
 
   const newMsg = {
     typeUrl: NEW_CHECKIN_TYPE_URL,
     value: NewMsgCheckInType.fromObject({
-      creator:             wallet.address,
-      slogan:              checkInMessage,
-      recoverInterruption: false,
+      checkInAddress:  wallet.address,
+      checkInMessage:  checkInMessage,
+      checkInTimezone: checkInTimezone,
     }),
   };
 

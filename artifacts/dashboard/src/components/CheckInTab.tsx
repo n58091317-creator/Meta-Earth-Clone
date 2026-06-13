@@ -233,8 +233,8 @@ export function CheckInTab() {
           {/* Chain clarification */}
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2.5 text-xs text-blue-300">
             <span className="font-semibold">⛓ Rollup chain:</span>{' '}
-            Check-ins broadcast <code className="text-blue-200">MsgCheckIn</code> on <span className="font-medium">mecheckin_101-1</span> via <code className="text-blue-200">broadcastTxAsync</code>. The Meta Earth backend records check-ins from mempool acceptance.
-            View on explorer: <code className="text-blue-400/80">netType=rollapp_checkin</code>
+            Check-ins broadcast <code className="text-blue-200">MsgCheckIn</code> on <span className="font-medium">mecheckin_401-1</span> (<code className="text-blue-200">/mechain.checkin.MsgCheckIn</code>) via <code className="text-blue-200">broadcastTxSync</code>. Falls back to old rollup if wallet not activated. New wallets need testnet tokens first:{' '}
+            <a href="https://www.mec.me/en-US/faucet" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">mec.me/faucet</a>
           </div>
 
           {/* Scheduler info */}
