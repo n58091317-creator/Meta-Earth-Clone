@@ -22,9 +22,14 @@ Fields (same on both rollups):
 
 **Why:** Live testing on 2026-06-13 proved definitively: new rollup returns code 9 (not code 2) for `/stchain.rollapp.checkin.MsgCheckIn`, meaning the type IS registered and bytes ARE correctly parsed. Returns code 2 for `/mechain.checkin.MsgCheckIn`. The `meta-earth` repo proto defines the future type but it's not deployed on live chains yet.
 
+**Broadcast strategy (critical):**
+- **NEW rollup (alive):** use `SigningStargateClient.connectWithSigner(rpc, signer, { registry })` + `client.signAndBroadcast(address, [msg], fee)` — this waits for real DeliverTx block confirmation. Auto-fetches sequence, no manual sequence handling needed. Pattern from openroll ts-client module.ts.
+- **OLD rollup (dead):** use `Tendermint37Client.connect` + `SigningStargateClient.createWithSigner` + manual `client.sign` + `broadcastTxSync` — only does CheckTx, never gets block confirmation. Also handles code-32 sequence mismatch via retry.
+- `prefix` is NOT a valid `SigningStargateClientOptions` field — it's embedded in the signer itself (created with `ADDRESS_PREFIX`).
+
 **How to apply:**
-- Use `OLD_CHECKIN_TYPE_URL` (`/stchain.rollapp.checkin.MsgCheckIn`) on BOTH rollups
+- Use `CHECKIN_TYPE_URL` (`/stchain.rollapp.checkin.MsgCheckIn`) on BOTH rollups
 - Message value: `{ creator: wallet.address, slogan: 'ME, My Way!', recoverInterruption: false }`
-- Try new rollup first (it produces blocks → txs get confirmed), fall back to old rollup
+- Try new rollup first with `signAndBroadcast`, fall back to old rollup with `broadcastTxSync`
 - Chain ID: fetch from `GET <rpc>/status` → `result.node_info.network` before signing
 - Wallets need testnet tokens first: `https://www.mec.me/en-US/faucet`

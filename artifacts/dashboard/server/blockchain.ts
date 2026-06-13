@@ -623,23 +623,61 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 // ─── Daily check-in ───────────────────────────────────────────────────────────
 // Both rollups use /stchain.rollapp.checkin.MsgCheckIn (creator, slogan, recoverInterruption).
 // /mechain.checkin.MsgCheckIn is NOT registered on either live chain (confirmed 2026-06-13).
-// Try new rollup first (mecheckin_401-1 — alive, produces blocks), then fall back to old.
-// Chain ID fetched dynamically from /status at broadcast time.
-export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
-  const checkInMessage  = process.env.CHECK_IN_MESSAGE  ?? 'ME, My Way!';
+// New rollup is ALIVE — use signAndBroadcast (waits for DeliverTx block confirmation).
+// Old rollup is DEAD — keep broadcastTxSync (CheckTx only, no blocks since 2026-05-01).
+// Pattern matches openroll ts-client module.ts: connectWithSigner + signAndBroadcast.
 
-  // Both rollups share the same type URL and field structure
+/** Check-in on the NEW rollup via signAndBroadcast → real DeliverTx confirmation. */
+async function newRollupCheckin(
+  wallet: StoredWallet,
+  rpc: string,
+  chainId: string,
+  slogan: string,
+): Promise<TxResult | null> {
+  const signer   = await buildSigner(wallet);
+  const registry = new Registry([...defaultRegistryTypes]);
+  registry.register(OLD_CHECKIN_TYPE_URL, OldMsgCheckInType as any);
+
+  // connectWithSigner: official pattern from openroll ts-client / meta-earth-js-sdk
+  const client = await withTimeout(CLIENT_TIMEOUT_MS, 'newRollupCheckin:connect',
+    () => SigningStargateClient.connectWithSigner(rpc, signer, { registry })
+  );
+
+  // Quick account check — avoids a full signAndBroadcast round-trip for unfunded wallets
+  try {
+    await client.getSequence(wallet.address);
+  } catch (e: any) {
+    const m = e?.message ?? '';
+    if (m.includes('does not exist') || m.includes('not found')) {
+      console.log(`[blockchain] ${wallet.label}: no account on ${chainId}. Fund at https://www.mec.me/en-US/faucet`);
+      return null;
+    }
+    throw e;
+  }
+
   const checkInMsg = {
     typeUrl: OLD_CHECKIN_TYPE_URL,
-    value: OldMsgCheckInType.fromPartial({
-      creator:             wallet.address,
-      slogan:              checkInMessage,
-      recoverInterruption: false,
-    }),
+    value:   OldMsgCheckInType.fromPartial({ creator: wallet.address, slogan, recoverInterruption: false }),
   };
 
+  // signAndBroadcast: auto-fetches sequence, signs, broadcasts, polls until DeliverTx.
+  const result = await withTimeout(75_000, 'newRollupCheckin:signAndBroadcast',
+    () => client.signAndBroadcast(wallet.address, [checkInMsg], NEW_ROLLUP_FEE)
+  );
+
+  if (result.code !== 0) {
+    return { success: false, error: `DeliverTx code ${result.code}: ${result.rawLog ?? ''}` };
+  }
+
+  console.log(`[blockchain] ${wallet.label} ✓ check-in CONFIRMED on ${chainId}. TX: ${result.transactionHash}`);
+  return { success: true, txHash: result.transactionHash };
+}
+
+export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
+  const slogan = process.env.CHECK_IN_MESSAGE ?? 'ME, My Way!';
+
   try {
-    // Try NEW rollup first — it's alive and confirms txs (unlike old dead rollup)
+    // Step 1: Try NEW rollup — alive, produces blocks → signAndBroadcast for real confirmation
     let newChainId: string | null = null;
     try {
       newChainId = await fetchRollupChainId(NEW_ROLLUP_RPC);
@@ -648,16 +686,18 @@ export async function performCheckin(wallet: StoredWallet, network = 'mainnet'):
     }
 
     if (newChainId) {
-      const newResult = await rollupBroadcastToChain(wallet, [checkInMsg], '', NEW_ROLLUP_RPC, newChainId, NEW_ROLLUP_FEE);
+      const newResult = await newRollupCheckin(wallet, NEW_ROLLUP_RPC, newChainId, slogan);
       if (newResult !== null) return newResult;
-      console.log(`[blockchain] ${wallet.label}: wallet not on new rollup (${newChainId}), falling back to old rollup.`);
-      console.log(`[blockchain]   ⚠️  Get testnet tokens at https://www.mec.me/en-US/faucet`);
     }
 
-    // Fall back to OLD rollup (dead — no blocks since 2026-05-01, but still accepts txs)
+    // Step 2: OLD rollup fallback — dead (no blocks since 2026-05-01), CheckTx only
+    const checkInMsg = {
+      typeUrl: OLD_CHECKIN_TYPE_URL,
+      value:   OldMsgCheckInType.fromPartial({ creator: wallet.address, slogan, recoverInterruption: false }),
+    };
     const oldResult = await rollupBroadcastToChain(wallet, [checkInMsg], '', OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, OLD_ROLLUP_FEE);
     if (oldResult === null) {
-      return { success: false, error: 'Wallet not found on either rollup. Get testnet tokens at https://www.mec.me/en-US/faucet' };
+      return { success: false, error: 'Wallet not found on either rollup. Fund at https://www.mec.me/en-US/faucet' };
     }
     return oldResult;
   } catch (err: any) {
