@@ -679,6 +679,12 @@ async function newRollupCheckin(
   );
 
   if (result.code !== 0) {
+    if (result.code === 1101) {
+      return { success: false, error: `Wallet not registered in Meta Earth (KYC required). Please create a Meta Earth account and link this wallet at https://www.mec.me` };
+    }
+    if (result.code === 1108) {
+      return { success: false, error: `Invalid check-in slogan (code 1108). Update CHECK_IN_MESSAGE to a valid value such as "META EARTH! ME, My Way!"` };
+    }
     return { success: false, error: `DeliverTx code ${result.code}: ${result.rawLog ?? ''}` };
   }
 
@@ -687,7 +693,7 @@ async function newRollupCheckin(
 }
 
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
-  const slogan = process.env.CHECK_IN_MESSAGE ?? 'ME, My Way!';
+  const slogan = process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!';
 
   try {
     // Step 1: Try NEW rollup — alive, produces blocks → signAndBroadcast for real confirmation

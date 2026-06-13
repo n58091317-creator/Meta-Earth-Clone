@@ -8,8 +8,10 @@ description: BOTH live rollups use /stchain.rollapp.checkin.MsgCheckIn. /mechain
 
 Fields (same on both rollups):
 - `creator` (1, string) — wallet address
-- `slogan` (2, string) — check-in message, must be `"ME, My Way!"` (default)
+- `slogan` (2, string) — check-in message; default **must be `"META EARTH! ME, My Way!"`** — `"ME, My Way!"` alone fails chain slogan validation (code 1108); the longer canonical string passes validation (confirmed live 2026-06-13)
 - `recoverInterruption` (3, bool) — always `false`
+
+**KYC required (code 1101):** After a valid slogan passes format check, the chain enforces `stchain.rollapp.kyc` DID registration (code 1101 = "creator is not kyc user"). KYC is issued by the Meta Earth backend via IBC Merkle proofs — cannot be self-registered via tx. Wallet must first be linked in the Meta Earth app at https://www.mec.me.
 
 **NEW rollup (`mecheckin_401-1` at `118.175.0.249:46657`)** — ALIVE, produces blocks:
 - Fee: `{ amount: [], gas: '500000' }` (no min gas price)
@@ -29,7 +31,7 @@ Fields (same on both rollups):
 
 **How to apply:**
 - Use `CHECKIN_TYPE_URL` (`/stchain.rollapp.checkin.MsgCheckIn`) on BOTH rollups
-- Message value: `{ creator: wallet.address, slogan: 'ME, My Way!', recoverInterruption: false }`
+- Message value: `{ creator: wallet.address, slogan: 'META EARTH! ME, My Way!', recoverInterruption: false }`
 - Try new rollup first with `signAndBroadcast`, fall back to old rollup with `broadcastTxSync`
 - Chain ID: fetch from `GET <rpc>/status` → `result.node_info.network` before signing
 - Wallets need testnet tokens first: `https://www.mec.me/en-US/faucet`

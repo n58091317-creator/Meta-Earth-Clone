@@ -208,9 +208,17 @@ async function checkinOnNewRollup(
   const result = await client.signAndBroadcast(wallet.address, [checkInMsg], NEW_ROLLUP_FEE);
 
   if (result.code !== 0) {
+    if (result.code === 1101) {
+      log(`${wallet.label}: KYC not registered. Create a Meta Earth account and link this wallet at https://www.mec.me`);
+      return { success: false, error: `Not a KYC user — register your wallet in the Meta Earth app at https://www.mec.me` };
+    }
+    if (result.code === 1108) {
+      return { success: false, error: `Invalid slogan (code 1108) — set CHECK_IN_MESSAGE env var to a valid value` };
+    }
     return { success: false, error: `DeliverTx code ${result.code}: ${result.rawLog ?? ''}` };
   }
 
+  log(`${wallet.label}: ✓ check-in CONFIRMED on ${chainId}. TX: ${result.transactionHash}`);
   return { success: true, txHash: result.transactionHash, chain: chainId };
 }
 
@@ -290,7 +298,7 @@ export async function performCheckin(
   wallet: WalletInfo,
   network = 'mainnet',
 ): Promise<{ success: boolean; txHash?: string; chain?: string; error?: string }> {
-  const slogan = process.env.CHECK_IN_MESSAGE ?? 'ME, My Way!';
+  const slogan = process.env.CHECK_IN_MESSAGE ?? 'META EARTH! ME, My Way!';
 
   log(`Starting check-in for ${wallet.label} (${wallet.address})`);
   log(`  slogan: ${slogan}`);

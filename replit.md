@@ -62,6 +62,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 - `protobufjs@6.x` is blocked by Replit security policy; override to `^7.4.0` is set in `pnpm-workspace.yaml`.
 - The chain at port 26657 on `118.175.0.247` is a separate `gc_20-1` chain (prefix `gc`), NOT the me-hub. The me-hub RPC is at port `16657`.
 - Dashboard rollup balance queries `ibc/BC7F4D...` denom (IBC-bridged umec); `urax` is the rollup's native staking denom and is unrelated to MEC balance.
+- **KYC (code 1101) = wallet not registered in Meta Earth app** — `stchain.rollapp.kyc` DID is issued by the Meta Earth backend via IBC Merkle proofs; cannot be self-registered. Wallet must be linked in the Meta Earth app at https://www.mec.me before check-in will confirm.
+- **Correct default slogan is `META EARTH! ME, My Way!`** — `"ME, My Way!"` alone fails on-chain slogan format validation (code 1108). The longer canonical string passes validation and proceeds to KYC check.
 
 ## Secrets to set in Replit
 
