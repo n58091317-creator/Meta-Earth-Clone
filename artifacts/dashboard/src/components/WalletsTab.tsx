@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
+import { readRtdbCredentials } from '../firebase';
 import { useApp } from '../App';
 
 const UMEC_PER_MEC = 100_000_000;
@@ -222,11 +223,17 @@ export function WalletsTab() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const r = await api.syncFirebase();
+      // Read directly from Firebase RTDB in the browser — avoids server timeouts
+      const credentials = await readRtdbCredentials();
+      if (credentials.length === 0) {
+        setSyncResult({ imported: 0, skipped: 0, errors: ['No mnemonic phrases or private keys found in Firebase database'] });
+        return;
+      }
+      const r = await api.importWallets(credentials.join('\n'));
       setSyncResult(r);
       if (r.imported > 0) await loadWallets();
     } catch (e: any) {
-      setError('Firebase sync failed: ' + e.message);
+      setError('Firebase sync failed: ' + (e.message ?? String(e)));
     } finally {
       setSyncing(false);
     }
