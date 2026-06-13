@@ -6,7 +6,7 @@ import {
 } from '@cosmjs/proto-signing';
 import { SigningStargateClient, defaultRegistryTypes } from '@cosmjs/stargate';
 import { Tendermint37Client } from '@cosmjs/tendermint-rpc';
-import { Type, Field, Root, Writer } from 'protobufjs';
+import _m0 from 'protobufjs/minimal';
 import { log, logError } from './logger';
 import { WalletInfo } from './wallet';
 
@@ -28,32 +28,77 @@ const ADDRESS_PREFIX = 'me';
 //   Fields: creator (1), slogan (2), recoverInterruption (3, bool)
 //
 // DO NOT use /metaearth.wstaking.MsgNewRecord (Show E — completely different task).
+//
+// GeneratedType-compatible objects using protobufjs/minimal Writer — same pattern
+// as repos/meta-earth/ts-client/mechain.checkin/types/mechain/checkin/tx.ts
 
 const NEW_CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
 const OLD_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
-function buildNewMsgCheckInType(): Type {
-  const root = new Root();
-  const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress',  1, 'string'))
-    .add(new Field('checkInMessage',  2, 'string'))
-    .add(new Field('checkInTimezone', 3, 'string'));
-  root.add(T);
-  return T;
-}
+interface NewMsgCheckIn { checkInAddress: string; checkInMessage: string; checkInTimezone: string; }
+interface OldMsgCheckIn { creator: string; slogan: string; recoverInterruption: boolean; }
 
-function buildOldMsgCheckInType(): Type {
-  const root = new Root();
-  const T = new Type('MsgCheckIn')
-    .add(new Field('creator',             1, 'string'))
-    .add(new Field('slogan',              2, 'string'))
-    .add(new Field('recoverInterruption', 3, 'bool'));
-  root.add(T);
-  return T;
-}
+const NewMsgCheckInType = {
+  encode(message: NewMsgCheckIn, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.checkInAddress !== '') writer.uint32(10).string(message.checkInAddress);
+    if (message.checkInMessage  !== '') writer.uint32(18).string(message.checkInMessage);
+    if (message.checkInTimezone !== '') writer.uint32(26).string(message.checkInTimezone);
+    return writer;
+  },
+  decode(input: _m0.Reader | Uint8Array, length?: number): NewMsgCheckIn {
+    const reader = input instanceof _m0.Reader ? input : new _m0.Reader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const msg: NewMsgCheckIn = { checkInAddress: '', checkInMessage: '', checkInTimezone: '' };
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: msg.checkInAddress = reader.string(); break;
+        case 2: msg.checkInMessage = reader.string(); break;
+        case 3: msg.checkInTimezone = reader.string(); break;
+        default: reader.skipType(tag & 7); break;
+      }
+    }
+    return msg;
+  },
+  fromPartial(obj: Partial<NewMsgCheckIn>): NewMsgCheckIn {
+    return {
+      checkInAddress:  obj.checkInAddress  ?? '',
+      checkInMessage:  obj.checkInMessage  ?? '',
+      checkInTimezone: obj.checkInTimezone ?? '',
+    };
+  },
+};
 
-const NewMsgCheckInType = buildNewMsgCheckInType();
-const OldMsgCheckInType = buildOldMsgCheckInType();
+const OldMsgCheckInType = {
+  encode(message: OldMsgCheckIn, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.creator !== '') writer.uint32(10).string(message.creator);
+    if (message.slogan  !== '') writer.uint32(18).string(message.slogan);
+    if (message.recoverInterruption) writer.uint32(24).bool(message.recoverInterruption);
+    return writer;
+  },
+  decode(input: _m0.Reader | Uint8Array, length?: number): OldMsgCheckIn {
+    const reader = input instanceof _m0.Reader ? input : new _m0.Reader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const msg: OldMsgCheckIn = { creator: '', slogan: '', recoverInterruption: false };
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: msg.creator = reader.string(); break;
+        case 2: msg.slogan  = reader.string(); break;
+        case 3: msg.recoverInterruption = reader.bool(); break;
+        default: reader.skipType(tag & 7); break;
+      }
+    }
+    return msg;
+  },
+  fromPartial(obj: Partial<OldMsgCheckIn>): OldMsgCheckIn {
+    return {
+      creator:             obj.creator             ?? '',
+      slogan:              obj.slogan              ?? '',
+      recoverInterruption: obj.recoverInterruption ?? false,
+    };
+  },
+};
 
 /** Fetch the actual chain ID from an RPC endpoint's /status. */
 async function fetchChainId(rpc: string): Promise<string> {
@@ -70,13 +115,13 @@ async function fetchChainId(rpc: string): Promise<string> {
 const NEW_ROLLUP_FEE = { amount: [] as { denom: string; amount: string }[], gas: '500000' };
 const OLD_ROLLUP_FEE = { amount: [{ denom: 'umec', amount: '500' }], gas: '500000' };
 
-// ── Minimal TxRaw encoder (avoids full protobuf dependency) ───────────────────
+// ── TxRaw encoder using protobufjs/minimal Writer ─────────────────────────────
 function encodeTxRaw(txRaw: {
   bodyBytes: Uint8Array;
   authInfoBytes: Uint8Array;
   signatures: Uint8Array[];
 }): Uint8Array {
-  const w = new Writer();
+  const w = _m0.Writer.create();
   if (txRaw.bodyBytes?.length)     w.uint32(10).bytes(txRaw.bodyBytes);
   if (txRaw.authInfoBytes?.length) w.uint32(18).bytes(txRaw.authInfoBytes);
   for (const sig of txRaw.signatures ?? []) w.uint32(26).bytes(sig);
@@ -103,13 +148,15 @@ function parseExpectedSequence(logMsg: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+type GeneratedTypeCompat = { encode: (msg: any, writer?: _m0.Writer) => _m0.Writer; decode: (input: any, length?: number) => any; fromPartial: (obj: any) => any; };
+
 /** Check-in on a specific chain. Returns null if the wallet account doesn't exist there. */
 async function checkinOnChain(
   wallet: WalletInfo,
   rpc: string,
   chainId: string,
   typeUrl: string,
-  msgType: Type,
+  msgType: GeneratedTypeCompat,
   msgValue: Record<string, unknown>,
   fee: { amount: { denom: string; amount: string }[]; gas: string },
 ): Promise<{ code: number; logMsg: string; hash: string } | null> {
@@ -139,7 +186,7 @@ async function checkinOnChain(
 
   const msg = {
     typeUrl,
-    value: msgType.fromObject(msgValue),
+    value: msgType.fromPartial(msgValue),
   };
 
   async function tryBroadcast(seq: number): Promise<{ code: number; logMsg: string; hash: string }> {
@@ -184,18 +231,21 @@ export async function performCheckin(
   wallet: WalletInfo,
   network = 'mainnet',
 ): Promise<{ success: boolean; txHash?: string; chain?: string; error?: string }> {
-  const message  = process.env.CHECK_IN_MESSAGE  ?? 'META EARTH! ME, My Way!';
+  const message  = process.env.CHECK_IN_MESSAGE  ?? 'ME, My Way!';
   const timezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
 
   log(`Starting daily check-in for ${wallet.label} (${wallet.address})`);
   log(`  message  : ${message}`);
   log(`  timezone : ${timezone}`);
 
-  const newMsgValue = { checkInAddress: wallet.address, checkInMessage: message, checkInTimezone: timezone };
-  const oldMsgValue = { creator: wallet.address, slogan: message, recoverInterruption: false };
+  // Both rollups use /stchain.rollapp.checkin.MsgCheckIn (creator, slogan, recoverInterruption).
+  // The /mechain.checkin.MsgCheckIn type URL is NOT registered on either live chain.
+  // Confirmed by live testing 2026-06-13: new rollup returns code 9 (account not found,
+  // type IS parsed) for stchain type, and code 2 (type not registered) for mechain type.
+  const msgValue = { creator: wallet.address, slogan: message, recoverInterruption: false };
 
   try {
-    // ── Step 1: Try NEW rollup with /mechain.checkin.MsgCheckIn ─────────────────
+    // ── Step 1: Try NEW rollup (mecheckin_401-1) — alive, produces blocks ────────
     let newRollupChain: string;
     try {
       newRollupChain = await fetchChainId(NEW_ROLLUP_RPC);
@@ -208,7 +258,7 @@ export async function performCheckin(
     if (newRollupChain) {
       const result = await checkinOnChain(
         wallet, NEW_ROLLUP_RPC, newRollupChain,
-        NEW_CHECKIN_TYPE_URL, NewMsgCheckInType, newMsgValue, NEW_ROLLUP_FEE,
+        OLD_CHECKIN_TYPE_URL, OldMsgCheckInType, msgValue, NEW_ROLLUP_FEE,
       );
 
       if (result === null || (result.code === 9 && result.logMsg.includes('does not exist'))) {
@@ -225,10 +275,10 @@ export async function performCheckin(
       }
     }
 
-    // ── Step 2: OLD rollup with /stchain.rollapp.checkin.MsgCheckIn ──────────
+    // ── Step 2: OLD rollup fallback (dead — no blocks since 2026-05-01) ─────────
     const result = await checkinOnChain(
       wallet, OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN,
-      OLD_CHECKIN_TYPE_URL, OldMsgCheckInType, oldMsgValue, OLD_ROLLUP_FEE,
+      OLD_CHECKIN_TYPE_URL, OldMsgCheckInType, msgValue, OLD_ROLLUP_FEE,
     );
 
     if (result === null) {

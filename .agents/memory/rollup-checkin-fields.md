@@ -1,28 +1,30 @@
 ---
 name: Rollup MsgCheckIn — correct type URL and fields
-description: Correct check-in proto for both rollups. NEW rollup uses /mechain.checkin.MsgCheckIn (confirmed from proto file). OLD rollup (dead fallback) uses /stchain.rollapp.checkin.MsgCheckIn.
+description: BOTH live rollups use /stchain.rollapp.checkin.MsgCheckIn. /mechain.checkin.MsgCheckIn is NOT registered on any live chain. Confirmed by live chain testing 2026-06-13.
 ---
 
 ## Rule
-Daily check-in uses **different schemas** on new vs old rollup, broadcast via `broadcastTxSync`.
+**Both rollups use the same type URL:** `/stchain.rollapp.checkin.MsgCheckIn`
 
-**NEW rollup (`mecheckin_401-1` at `118.175.0.249:46657`):**
-- typeUrl: `/mechain.checkin.MsgCheckIn`
-- Source: `repos/meta-earth/proto/mechain/checkin/tx.proto`
-- Fields: `checkInAddress` (1, string), `checkInMessage` (2, string), `checkInTimezone` (3, string)
+Fields (same on both rollups):
+- `creator` (1, string) — wallet address
+- `slogan` (2, string) — check-in message, must be `"ME, My Way!"` (default)
+- `recoverInterruption` (3, bool) — always `false`
+
+**NEW rollup (`mecheckin_401-1` at `118.175.0.249:46657`)** — ALIVE, produces blocks:
 - Fee: `{ amount: [], gas: '500000' }` (no min gas price)
+- Test result: stchain type → code 9 (account not found = type IS registered + parsed correctly)
+- Test result: mechain type → code 2 (type NOT registered)
 
-**OLD rollup fallback (`mecheckin_101-1` at `118.175.0.247:23011`) — dead, no blocks since 2026-05-01:**
-- typeUrl: `/stchain.rollapp.checkin.MsgCheckIn`
-- Fields: `creator` (1, string), `slogan` (2, string), `recoverInterruption` (3, bool)
+**OLD rollup (`mecheckin_101-1` at `118.175.0.247:23011`)** — dead, no blocks since 2026-05-01:
 - Fee: `{ amount: [{ denom: 'umec', amount: '500' }], gas: '500000' }` (min-gas-price enforced)
+- Accepts txs (code 0) but never confirms
 
-**Why:** The proto file in `repos/meta-earth/proto/mechain/checkin/tx.proto` definitively shows `/mechain.checkin.MsgCheckIn`. Earlier memory was wrong — it recorded a failed broadcast test result from 2026-06-13 where the wallet wasn't activated (code 9/2 could mean either type unknown OR account missing). The proto file is authoritative.
+**Why:** Live testing on 2026-06-13 proved definitively: new rollup returns code 9 (not code 2) for `/stchain.rollapp.checkin.MsgCheckIn`, meaning the type IS registered and bytes ARE correctly parsed. Returns code 2 for `/mechain.checkin.MsgCheckIn`. The `meta-earth` repo proto defines the future type but it's not deployed on live chains yet.
 
 **How to apply:**
-- New rollup message: `{ checkInAddress: wallet.address, checkInMessage: '...', checkInTimezone: 'UTC' }`
-- Old rollup message: `{ creator: wallet.address, slogan: '...', recoverInterruption: false }`
+- Use `OLD_CHECKIN_TYPE_URL` (`/stchain.rollapp.checkin.MsgCheckIn`) on BOTH rollups
+- Message value: `{ creator: wallet.address, slogan: 'ME, My Way!', recoverInterruption: false }`
+- Try new rollup first (it produces blocks → txs get confirmed), fall back to old rollup
 - Chain ID: fetch from `GET <rpc>/status` → `result.node_info.network` before signing
-- New wallets need testnet tokens first: `https://www.mec.me/en-US/faucet`
-
-**Explorer:** `https://www.explorer-testnet.me/zh-TW/home`
+- Wallets need testnet tokens first: `https://www.mec.me/en-US/faucet`

@@ -6,7 +6,7 @@ import {
 } from '@cosmjs/proto-signing';
 import { SigningStargateClient, defaultRegistryTypes } from '@cosmjs/stargate';
 import { Tendermint37Client } from '@cosmjs/tendermint-rpc';
-import { Type, Field, Root, Writer } from 'protobufjs';
+import _m0 from 'protobufjs/minimal';
 import { StoredWallet } from './store';
 
 const HUB_RPC  = 'http://118.175.0.247:16657';
@@ -67,6 +67,10 @@ function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promis
 }
 
 // ─── Protobuf type definitions ────────────────────────────────────────────────
+//
+// All types use protobufjs/minimal Writer — proper GeneratedType-compatible objects
+// matching the pattern in repos/meta-earth/ts-client/mechain.checkin/types/mechain/checkin/tx.ts
+// This is required so cosmjs registry.encodeAsAny() produces correctly encoded bytes.
 
 // ── MsgCheckIn schema (from repos/meta-earth/proto/mechain/checkin/tx.proto) ──
 // NEW rollup uses /mechain.checkin.MsgCheckIn with 3 string fields:
@@ -76,73 +80,158 @@ function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promis
 const NEW_CHECKIN_TYPE_URL = '/mechain.checkin.MsgCheckIn';
 const OLD_CHECKIN_TYPE_URL = '/stchain.rollapp.checkin.MsgCheckIn';
 
-function buildNewMsgCheckInType(): Type {
-  const root = new Root();
-  const T = new Type('MsgCheckIn')
-    .add(new Field('checkInAddress',  1, 'string'))
-    .add(new Field('checkInMessage',  2, 'string'))
-    .add(new Field('checkInTimezone', 3, 'string'));
-  root.add(T);
-  return T;
-}
+interface INewMsgCheckIn { checkInAddress: string; checkInMessage: string; checkInTimezone: string; }
+interface IOldMsgCheckIn { creator: string; slogan: string; recoverInterruption: boolean; }
 
-function buildOldMsgCheckInType(): Type {
-  const root = new Root();
-  const T = new Type('MsgCheckIn')
-    .add(new Field('creator',             1, 'string'))
-    .add(new Field('slogan',              2, 'string'))
-    .add(new Field('recoverInterruption', 3, 'bool'));
-  root.add(T);
-  return T;
-}
+const NewMsgCheckInType = {
+  encode(msg: INewMsgCheckIn, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (msg.checkInAddress !== '') writer.uint32(10).string(msg.checkInAddress);
+    if (msg.checkInMessage  !== '') writer.uint32(18).string(msg.checkInMessage);
+    if (msg.checkInTimezone !== '') writer.uint32(26).string(msg.checkInTimezone);
+    return writer;
+  },
+  decode(input: _m0.Reader | Uint8Array, length?: number): INewMsgCheckIn {
+    const reader = input instanceof _m0.Reader ? input : new _m0.Reader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const result: INewMsgCheckIn = { checkInAddress: '', checkInMessage: '', checkInTimezone: '' };
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: result.checkInAddress = reader.string(); break;
+        case 2: result.checkInMessage = reader.string(); break;
+        case 3: result.checkInTimezone = reader.string(); break;
+        default: reader.skipType(tag & 7); break;
+      }
+    }
+    return result;
+  },
+  fromPartial(obj: Partial<INewMsgCheckIn>): INewMsgCheckIn {
+    return { checkInAddress: obj.checkInAddress ?? '', checkInMessage: obj.checkInMessage ?? '', checkInTimezone: obj.checkInTimezone ?? '' };
+  },
+};
 
-const NewMsgCheckInType = buildNewMsgCheckInType();
-const OldMsgCheckInType = buildOldMsgCheckInType();
+const OldMsgCheckInType = {
+  encode(msg: IOldMsgCheckIn, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (msg.creator !== '') writer.uint32(10).string(msg.creator);
+    if (msg.slogan  !== '') writer.uint32(18).string(msg.slogan);
+    if (msg.recoverInterruption) writer.uint32(24).bool(msg.recoverInterruption);
+    return writer;
+  },
+  decode(input: _m0.Reader | Uint8Array, length?: number): IOldMsgCheckIn {
+    const reader = input instanceof _m0.Reader ? input : new _m0.Reader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const result: IOldMsgCheckIn = { creator: '', slogan: '', recoverInterruption: false };
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: result.creator = reader.string(); break;
+        case 2: result.slogan  = reader.string(); break;
+        case 3: result.recoverInterruption = reader.bool(); break;
+        default: reader.skipType(tag & 7); break;
+      }
+    }
+    return result;
+  },
+  fromPartial(obj: Partial<IOldMsgCheckIn>): IOldMsgCheckIn {
+    return { creator: obj.creator ?? '', slogan: obj.slogan ?? '', recoverInterruption: obj.recoverInterruption ?? false };
+  },
+};
 
 // MsgNewRecord — hub chain wstaking module (Show E task, NOT daily check-in).
 // Fields confirmed from proto/metaearth/wstaking/record.proto and live tx inspection.
-function buildMsgNewRecordType(): Type {
-  const root = new Root();
-  const T = new Type('MsgNewRecord')
-    .add(new Field('actionNumber', 1, 'string'))
-    .add(new Field('actionUrl',    2, 'string'))
-    .add(new Field('from',         3, 'string'));
-  root.add(T);
-  return T;
-}
-const MsgNewRecordType = buildMsgNewRecordType();
+interface IMsgNewRecord { actionNumber: string; actionUrl: string; from: string; }
+const MsgNewRecordType = {
+  encode(msg: IMsgNewRecord, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (msg.actionNumber !== '') writer.uint32(10).string(msg.actionNumber);
+    if (msg.actionUrl    !== '') writer.uint32(18).string(msg.actionUrl);
+    if (msg.from         !== '') writer.uint32(26).string(msg.from);
+    return writer;
+  },
+  decode(input: _m0.Reader | Uint8Array, length?: number): IMsgNewRecord {
+    const reader = input instanceof _m0.Reader ? input : new _m0.Reader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const result: IMsgNewRecord = { actionNumber: '', actionUrl: '', from: '' };
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: result.actionNumber = reader.string(); break;
+        case 2: result.actionUrl    = reader.string(); break;
+        case 3: result.from         = reader.string(); break;
+        default: reader.skipType(tag & 7); break;
+      }
+    }
+    return result;
+  },
+  fromPartial(obj: Partial<IMsgNewRecord>): IMsgNewRecord {
+    return { actionNumber: obj.actionNumber ?? '', actionUrl: obj.actionUrl ?? '', from: obj.from ?? '' };
+  },
+};
 
-function buildWstakingWithdrawType(): Type {
-  const root = new Root();
-  const T = new Type('MsgWstakingWithdrawDelegatorReward')
-    .add(new Field('delegatorAddress', 1, 'string'))
-    .add(new Field('validatorAddress', 2, 'string'));
-  root.add(T);
-  return T;
-}
-const MsgWstakingWithdrawType = buildWstakingWithdrawType();
+interface IMsgWstakingWithdraw { delegatorAddress: string; validatorAddress: string; }
+const MsgWstakingWithdrawType = {
+  encode(msg: IMsgWstakingWithdraw, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (msg.delegatorAddress !== '') writer.uint32(10).string(msg.delegatorAddress);
+    if (msg.validatorAddress !== '') writer.uint32(18).string(msg.validatorAddress);
+    return writer;
+  },
+  decode(input: _m0.Reader | Uint8Array, length?: number): IMsgWstakingWithdraw {
+    const reader = input instanceof _m0.Reader ? input : new _m0.Reader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const result: IMsgWstakingWithdraw = { delegatorAddress: '', validatorAddress: '' };
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: result.delegatorAddress = reader.string(); break;
+        case 2: result.validatorAddress = reader.string(); break;
+        default: reader.skipType(tag & 7); break;
+      }
+    }
+    return result;
+  },
+  fromPartial(obj: Partial<IMsgWstakingWithdraw>): IMsgWstakingWithdraw {
+    return { delegatorAddress: obj.delegatorAddress ?? '', validatorAddress: obj.validatorAddress ?? '' };
+  },
+};
 
-function buildWstakingUnstakeType(): Type {
-  const root = new Root();
-  const Coin = new Type('Coin')
-    .add(new Field('denom', 1, 'string'))
-    .add(new Field('amount', 2, 'string'));
-  root.add(Coin);
-  const T = new Type('MsgWstakingUnstake')
-    .add(new Field('stakerAddress', 1, 'string'))
-    .add(new Field('validatorAddress', 2, 'string'))
-    .add(new Field('amount', 3, 'Coin'));
-  root.add(T);
-  return T;
-}
-const MsgWstakingUnstakeType = buildWstakingUnstakeType();
+interface ICoin { denom: string; amount: string; }
+interface IMsgWstakingUnstake { stakerAddress: string; validatorAddress: string; amount?: ICoin; }
+const MsgWstakingUnstakeType = {
+  encode(msg: IMsgWstakingUnstake, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (msg.stakerAddress    !== '') writer.uint32(10).string(msg.stakerAddress);
+    if (msg.validatorAddress !== '') writer.uint32(18).string(msg.validatorAddress);
+    if (msg.amount != null) {
+      const coinWriter = _m0.Writer.create();
+      if (msg.amount.denom  !== '') coinWriter.uint32(10).string(msg.amount.denom);
+      if (msg.amount.amount !== '') coinWriter.uint32(18).string(msg.amount.amount);
+      writer.uint32(26).bytes(coinWriter.finish());
+    }
+    return writer;
+  },
+  decode(input: _m0.Reader | Uint8Array, length?: number): IMsgWstakingUnstake {
+    const reader = input instanceof _m0.Reader ? input : new _m0.Reader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const result: IMsgWstakingUnstake = { stakerAddress: '', validatorAddress: '' };
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: result.stakerAddress    = reader.string(); break;
+        case 2: result.validatorAddress = reader.string(); break;
+        default: reader.skipType(tag & 7); break;
+      }
+    }
+    return result;
+  },
+  fromPartial(obj: Partial<IMsgWstakingUnstake>): IMsgWstakingUnstake {
+    return { stakerAddress: obj.stakerAddress ?? '', validatorAddress: obj.validatorAddress ?? '', amount: obj.amount };
+  },
+};
 
 function encodeTxRaw(txRaw: {
   bodyBytes: Uint8Array;
   authInfoBytes: Uint8Array;
   signatures: Uint8Array[];
 }): Uint8Array {
-  const w = new Writer();
+  const w = _m0.Writer.create();
   if (txRaw.bodyBytes?.length) w.uint32(10).bytes(txRaw.bodyBytes);
   if (txRaw.authInfoBytes?.length) w.uint32(18).bytes(txRaw.authInfoBytes);
   for (const sig of txRaw.signatures ?? []) w.uint32(26).bytes(sig);
@@ -276,21 +365,34 @@ async function rollupBroadcastToChain(
 
   let accountNumber = 0;
   let sequence = 0;
+  let accountMissing = false;
   try {
     const acct = await client.getSequence(wallet.address);
     accountNumber = acct.accountNumber;
     sequence = acct.sequence;
   } catch (e: any) {
-    if (e?.message?.includes('does not exist') || e?.message?.includes('not found')) {
-      return null; // wallet not activated on this chain
+    const msg = e?.message ?? '';
+    if (msg.includes('does not exist') || msg.includes('not found')) {
+      // Account doesn't exist yet — try broadcasting with seq=0 anyway.
+      // Some rollup chains auto-create accounts on first tx (especially with empty fee).
+      accountMissing = true;
+      accountNumber = 0;
+      sequence = 0;
+    } else {
+      throw e;
     }
-    throw e;
   }
 
   let result = await signAndBroadcast(tmClient, client as any, wallet, msgs, memo, chainId, accountNumber, sequence, fee);
 
-  // Code 9 = fee payer doesn't exist — wallet not activated (caught via broadcastTxSync)
-  if (result.code === 9 && result.log.includes('does not exist')) {
+  // Code 9 = fee payer / signer doesn't exist — wallet truly not activated on this chain
+  if (result.code === 9) {
+    return null;
+  }
+
+  // If we tried with a missing account and got a non-zero code, report it rather than fall through
+  if (accountMissing && result.code !== 0) {
+    console.log(`[blockchain] ${wallet.label}: new account attempt on ${chainId} returned code ${result.code}: ${result.log}`);
     return null;
   }
 
@@ -519,25 +621,17 @@ export async function getAllBalances(address: string, network = 'mainnet'): Prom
 // ─── Operations ───────────────────────────────────────────────────────────────
 
 // ─── Daily check-in ───────────────────────────────────────────────────────────
-// NEW rollup: /mechain.checkin.MsgCheckIn — checkInAddress, checkInMessage, checkInTimezone
-// OLD rollup: /stchain.rollapp.checkin.MsgCheckIn — creator, slogan, recoverInterruption
+// Both rollups use /stchain.rollapp.checkin.MsgCheckIn (creator, slogan, recoverInterruption).
+// /mechain.checkin.MsgCheckIn is NOT registered on either live chain (confirmed 2026-06-13).
+// Try new rollup first (mecheckin_401-1 — alive, produces blocks), then fall back to old.
 // Chain ID fetched dynamically from /status at broadcast time.
 export async function performCheckin(wallet: StoredWallet, network = 'mainnet'): Promise<TxResult> {
-  const checkInMessage  = process.env.CHECK_IN_MESSAGE  ?? 'META EARTH! ME, My Way!';
-  const checkInTimezone = process.env.CHECK_IN_TIMEZONE ?? 'UTC';
+  const checkInMessage  = process.env.CHECK_IN_MESSAGE  ?? 'ME, My Way!';
 
-  const newMsg = {
-    typeUrl: NEW_CHECKIN_TYPE_URL,
-    value: NewMsgCheckInType.fromObject({
-      checkInAddress:  wallet.address,
-      checkInMessage:  checkInMessage,
-      checkInTimezone: checkInTimezone,
-    }),
-  };
-
-  const oldMsg = {
+  // Both rollups share the same type URL and field structure
+  const checkInMsg = {
     typeUrl: OLD_CHECKIN_TYPE_URL,
-    value: OldMsgCheckInType.fromObject({
+    value: OldMsgCheckInType.fromPartial({
       creator:             wallet.address,
       slogan:              checkInMessage,
       recoverInterruption: false,
@@ -545,7 +639,7 @@ export async function performCheckin(wallet: StoredWallet, network = 'mainnet'):
   };
 
   try {
-    // Try NEW rollup first with new message schema
+    // Try NEW rollup first — it's alive and confirms txs (unlike old dead rollup)
     let newChainId: string | null = null;
     try {
       newChainId = await fetchRollupChainId(NEW_ROLLUP_RPC);
@@ -554,14 +648,14 @@ export async function performCheckin(wallet: StoredWallet, network = 'mainnet'):
     }
 
     if (newChainId) {
-      const newResult = await rollupBroadcastToChain(wallet, [newMsg], '', NEW_ROLLUP_RPC, newChainId, NEW_ROLLUP_FEE);
+      const newResult = await rollupBroadcastToChain(wallet, [checkInMsg], '', NEW_ROLLUP_RPC, newChainId, NEW_ROLLUP_FEE);
       if (newResult !== null) return newResult;
       console.log(`[blockchain] ${wallet.label}: wallet not on new rollup (${newChainId}), falling back to old rollup.`);
       console.log(`[blockchain]   ⚠️  Get testnet tokens at https://www.mec.me/en-US/faucet`);
     }
 
-    // Fall back to OLD rollup with old message schema + fee
-    const oldResult = await rollupBroadcastToChain(wallet, [oldMsg], '', OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, OLD_ROLLUP_FEE);
+    // Fall back to OLD rollup (dead — no blocks since 2026-05-01, but still accepts txs)
+    const oldResult = await rollupBroadcastToChain(wallet, [checkInMsg], '', OLD_ROLLUP_RPC, OLD_ROLLUP_CHAIN, OLD_ROLLUP_FEE);
     if (oldResult === null) {
       return { success: false, error: 'Wallet not found on either rollup. Get testnet tokens at https://www.mec.me/en-US/faucet' };
     }

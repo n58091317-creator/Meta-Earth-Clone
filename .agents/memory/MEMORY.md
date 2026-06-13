@@ -1,4 +1,5 @@
-- [Rollup MsgCheckIn — correct type & fields](rollup-checkin-fields.md) — use /stchain.rollapp.checkin.MsgCheckIn (2 fields, no timezone) on rollup via broadcastTxSync; confirmed from live mempool 2026-06-10.
+- [Rollup MsgCheckIn — correct type & fields](rollup-checkin-fields.md) — BOTH rollups use /stchain.rollapp.checkin.MsgCheckIn; /mechain.checkin.MsgCheckIn NOT registered on any live chain. Confirmed 2026-06-13.
+- [protobufjs encoding — GeneratedType objects](protobuf-generatedtype-encoding.md) — use _m0.Writer inline objects (not protobufjs.Type) for cosmjs registry; Type.fromObject() produces malformed Any.value bytes.
 - [Rollup sequence mismatch & mempool full](rollup-sequence-mempool.md) — mempool permanently full at 5000 txs; use broadcastTxSync, detect code-32, retry with expected sequence.
 - [MsgNewRecord = Show E, NOT check-in](hub-checkin-msgnewrecord.md) — /metaearth.wstaking.MsgNewRecord on hub triggers "Show E" in the Meta Earth app; never use for daily check-in.
 - [Replit api-server artifact routing](replit-api-server-proxy.md) — Replit auto-creates an api-server on port 8080 that intercepts /api/* browser requests; must proxy it to the real server.
